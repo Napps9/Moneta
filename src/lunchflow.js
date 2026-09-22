@@ -3,6 +3,7 @@
  *
  *   GET /accounts                      -> { accounts: [...] }
  *   GET /accounts/:id/balance          -> { balance: { ... } }
+ *   GET /accounts/:id/transactions     -> { transactions: [...] }  (?from=&to=&include_pending=true)
  *
  * Authentication is an `x-api-key` header. API keys are created from an
  * "API destination" in the Lunch Flow dashboard (https://lunchflow.app/destinations).
@@ -71,6 +72,31 @@ export function normalizeBalance(raw, fallbackCurrency = null) {
   };
 }
 
+/**
+ * Normalize a raw transaction. Field names differ between Lunch Flow clients
+ * (`accountId`/`account_id`, `merchant`/`merchant_name`, `isPending`/`pending`),
+ * so all of them are accepted. Positive amounts are money in, negative money out.
+ */
+export function normalizeTransaction(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const amount = num(raw.amount);
+  const date = str(raw.date).slice(0, 10);
+  if (amount === null || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const merchant = str(raw.merchant) || str(raw.merchant_name) || str(raw.merchantName) || null;
+  const description = str(raw.description) || merchant || '';
+  const pending = raw.pending ?? raw.isPending ?? raw.is_pending ?? false;
+  return {
+    id: raw.id == null ? null : String(raw.id),
+    date,
+    amount,
+    currency: str(raw.currency).toUpperCase() || null,
+    description,
+    merchant,
+    category: str(raw.category) || null,
+    pending: pending === true || pending === 'true',
+  };
+}
+
 export function createLunchFlowClient({
   apiKey,
   baseUrl = DEFAULT_BASE_URL,
@@ -133,6 +159,18 @@ export function createLunchFlowClient({
     async getBalance(accountId) {
       const body = await request(`accounts/${encodeURIComponent(String(accountId))}/balance`);
       return normalizeBalance(body.balance ?? body);
+    },
+
+    async listTransactions(accountId, { from = null, to = null, includePending = true } = {}) {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (includePending) params.set('include_pending', 'true');
+      const query = params.toString();
+      const body = await request(`accounts/${encodeURIComponent(String(accountId))}/transactions${query ? `?${query}` : ''}`);
+      const list = Array.isArray(body.transactions) ? body.transactions : Array.isArray(body) ? body : null;
+      if (!list) throw new LunchFlowError('Unexpected transactions response shape', { code: 'bad_response' });
+      return list.map(normalizeTransaction).filter(Boolean);
     },
   };
 }

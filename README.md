@@ -34,6 +34,13 @@ One-time setup:
 
 The page refreshes every five minutes while open, and the Refresh button fetches immediately. It only works inside claude.ai or the Claude app, since that is where your connectors live.
 
+## Two screens
+
+- **Balances** (`#/balances`): every account with its current balance, grouped by type or by bank, with totals.
+- **Accounts** (`#/accounts`): one account and one calendar month at a time. Pick the account and step through months to see money in, money out, the net, and the opening and month-end balance, with the month's transactions underneath. Account names on the Balances screen link straight to it.
+
+For a finished month the month-end balance is derived: the current balance minus everything that happened after that month (which is why transactions are fetched up to today). For the current month it is simply the balance now, labelled as month in progress. Positive transaction amounts count as money in, negative as money out, pending ones included.
+
 ## Grouping accounts
 
 The page groups accounts into **Savings**, **Spending** and **Credit**, with a subtotal per group, and a "By bank" toggle to see them per institution instead. Lunch Flow does not say what kind of account something is, so the group is worked out from the account name: words like *saver*, *savings*, *ISA* or *pot* mean savings; *credit*, *card*, *flex* or *loan* mean credit; accounts from card issuers such as American Express are credit; everything else is spending.
@@ -131,8 +138,9 @@ browser  ──GET /api/balances──▶  server.js  ──GET /accounts──�
 
 1. The server calls `GET /accounts` to list every connected account.
 2. It calls `GET /accounts/:id/balance` for each account, a few at a time.
-3. The results are joined, sorted by institution, summed per currency and cached.
+3. The results are joined, sorted by institution, grouped, summed per currency and cached.
 4. The page renders the snapshot. An account whose balance could not be fetched is still listed, with the error next to it, and is left out of the totals.
+5. The Accounts screen calls `GET /accounts/:id/transactions` for the chosen account and period, cached per account and period.
 
 Routes served by the app:
 
@@ -141,6 +149,7 @@ Routes served by the app:
 | `GET /` | The page. |
 | `GET /api/balances` | JSON snapshot of accounts, balances, groups and totals. Add `?refresh=1` to bypass the cache. When the server has no settings store, the page sends its settings in an `x-moneta-settings` header. |
 | `GET`, `PUT /api/settings` | Read or replace the per-account settings made in the app. |
+| `GET /api/activity?account=&from=&to=` | One account's transactions and totals for a period (dates as `YYYY-MM-DD`, at most 400 days; defaults to the current calendar month). |
 | `GET /api/health` | Returns `{ "ok": true, "passwordRequired": false }`. |
 
 When a password is set, `GET /api/balances` expects an `Authorization: Bearer <password>` header and answers `401` without it. The page handles this by asking for the password and remembering it in that browser.
@@ -161,10 +170,11 @@ vercel.json        Vercel settings: static output from public/, security headers
 src/runtime.js     builds the client, snapshot service and password gate from the environment
 src/lunchflow.js   Lunch Flow API client and response normalization
 src/balances.js    snapshot builder: fan-out, totals, grouping, caching
+src/activity.js    per-account transactions and totals for a period
 src/groups.js      puts accounts into groups from names and the config
 src/settings.js    per-account settings made in the app, and where they are stored
 groups.config.js   group names, keywords and fixed assignments
-api/               Vercel serverless functions (balances, settings, health)
+api/               Vercel serverless functions (balances, activity, settings, health)
 src/auth.js        password gate for the API
 src/app.js         HTTP handlers: JSON API and static files
 src/mock.js        sample data used by `npm run mock`

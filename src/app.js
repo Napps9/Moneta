@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { LunchFlowError } from './lunchflow.js';
 import { MAX_SETTINGS_BYTES, parseSettingsJson } from './settings.js';
+import { ActivityError } from './activity.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -131,6 +132,51 @@ export function createBalancesHandler({ service = null, auth = null, logger = co
   };
 }
 
+/** Handler for `GET /api/activity?account=&from=&to=`: one account's money in, money out and balances for a period. */
+export function createActivityHandler({ service = null, auth = null, logger = console } = {}) {
+  return async function handleActivity(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.setHeader('Allow', 'GET, HEAD');
+      return sendJson(req, res, 405, { error: 'Method not allowed' });
+    }
+    const denied = checkAuth(auth, req);
+    if (denied) {
+      if (denied.status === 401 && denied.attempted) await sleep(300);
+      return sendJson(req, res, denied.status, denied.body);
+    }
+    if (!service) {
+      return sendJson(req, res, 503, { error: 'Lunch Flow API key not configured', message: 'Set LUNCHFLOW_API_KEY and redeploy.' });
+    }
+    let url;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      return sendJson(req, res, 400, { error: 'Bad request' });
+    }
+    const accountId = url.searchParams.get('account');
+    if (!accountId) return sendJson(req, res, 400, { error: 'Bad request', message: 'account is required' });
+    const refresh = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? '');
+    try {
+      const data = await service.getActivity({
+        accountId,
+        from: url.searchParams.get('from'),
+        to: url.searchParams.get('to'),
+        refresh,
+        settings: settingsFromRequest(req),
+      });
+      return sendJson(req, res, 200, data);
+    } catch (err) {
+      if (err instanceof ActivityError) {
+        return sendJson(req, res, err.status, { error: err.status === 404 ? 'Not found' : 'Bad request', message: err.message });
+      }
+      logger.error?.(`Activity request failed: ${err && err.message ? err.message : err}`);
+      const { status, body } = describeUpstreamError(err);
+      return sendJson(req, res, status, body);
+    }
+  };
+}
+
 /** Handler for `GET` and `PUT /api/settings`: per-account settings made in the app. */
 export function createSettingsHandler({ service = null, auth = null, logger = console } = {}) {
   return async function handleSettings(req, res) {
@@ -174,11 +220,12 @@ export function createHealthHandler({ auth = null } = {}) {
 }
 
 /** Full handler for the self-hosted server: the API plus the static page. */
-export function createRequestHandler({ service = null, auth = null, publicDir, logger = console }) {
+export function createRequestHandler({ service = null, activity = null, auth = null, publicDir, logger = console }) {
   if (!publicDir) throw new Error('A public directory is required');
   const root = path.resolve(publicDir);
   const balances = createBalancesHandler({ service, auth, logger });
   const settings = createSettingsHandler({ service, auth, logger });
+  const activityHandler = createActivityHandler({ service: activity, auth, logger });
   const health = createHealthHandler({ auth });
 
   async function serveStatic(req, res, pathname) {
@@ -236,6 +283,7 @@ export function createRequestHandler({ service = null, auth = null, publicDir, l
     try {
       if (url.pathname === '/api/balances') return await balances(req, res);
       if (url.pathname === '/api/settings') return await settings(req, res);
+      if (url.pathname === '/api/activity') return await activityHandler(req, res);
       if (url.pathname === '/api/health') return health(req, res);
       if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'Not found' });
       return await serveStatic(req, res, url.pathname);

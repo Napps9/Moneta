@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_BASE_URL, createLunchFlowClient } from './lunchflow.js';
 import { createMockClient } from './mock.js';
 import { createBalanceService } from './balances.js';
+import { createActivityService } from './activity.js';
 import { createAuth } from './auth.js';
 import { loadGroupsConfig } from './groups.js';
 import { createSettingsStore } from './settings.js';
@@ -42,10 +43,11 @@ export function createRuntime(env = process.env, { mock = truthy(env.LUNCHFLOW_M
   const dataDir = truthy(env.VERCEL) ? null : path.resolve(root, env.MONETA_DATA_DIR || 'data');
   const settingsStore = createSettingsStore(env, { dataDir });
   const service = client ? createBalanceService({ client, groupsConfig, settingsStore, ttlMs: ttlSeconds * 1000, logger }) : null;
+  const activity = service ? createActivityService({ client, balances: service, ttlMs: ttlSeconds * 1000, logger }) : null;
   const auth = createAuth({
     password: env.MONETA_PASSWORD || '',
     required: truthy(env.MONETA_REQUIRE_PASSWORD),
   });
 
-  return { mock, client, service, auth, groupsConfig, settingsStore, ttlSeconds };
+  return { mock, client, service, activity, auth, groupsConfig, settingsStore, ttlSeconds };
 }

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequestHandler } from '../src/app.js';
 import { createBalanceService } from '../src/balances.js';
+import { createActivityService } from '../src/activity.js';
 import { createMockClient } from '../src/mock.js';
 import { LunchFlowError } from '../src/lunchflow.js';
 import { createAuth } from '../src/auth.js';
@@ -27,8 +28,36 @@ let mockServer;
 let base;
 
 before(async () => {
-  const service = createBalanceService({ client: createMockClient({ delayMs: 0 }), logger: silent });
-  ({ server: mockServer, base } = await listen(createRequestHandler({ service, publicDir, logger: silent })));
+  const client = createMockClient({ delayMs: 0 });
+  const service = createBalanceService({ client, logger: silent });
+  const activity = createActivityService({ client, balances: service, logger: silent });
+  ({ server: mockServer, base } = await listen(createRequestHandler({ service, activity, publicDir, logger: silent })));
+});
+
+test('GET /api/activity returns one account’s money in, money out and balances', async () => {
+  const missing = await fetch(`${base}/api/activity`);
+  assert.equal(missing.status, 400);
+
+  const unknown = await fetch(`${base}/api/activity?account=999`);
+  assert.equal(unknown.status, 404);
+
+  const bad = await fetch(`${base}/api/activity?account=101&from=nope&to=2026-01-01`);
+  assert.equal(bad.status, 400);
+
+  const res = await fetch(`${base}/api/activity?account=101`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.account.id, 101);
+  assert.equal(body.currency, 'GBP');
+  assert.ok(body.income >= 0 && body.outgoings >= 0);
+  assert.equal(body.net, Math.round((body.income - body.outgoings) * 10000) / 10000);
+  assert.equal(body.closingBalance, 2510.43, 'the current month closes on the current balance');
+  assert.equal(body.closingIsCurrent, true);
+  assert.ok(Array.isArray(body.transactions));
+  assert.equal(body.transactionCount, body.transactions.length);
+
+  const broken = await fetch(`${base}/api/activity?account=501`);
+  assert.equal(broken.status, 502, 'an upstream failure is reported, not hidden');
 });
 
 after(() => mockServer.close());

@@ -19,23 +19,41 @@
       </div>
       <div class="topbar-actions">
         <span id="updated" class="updated" aria-live="polite"></span>
-        <button id="refresh" class="btn" type="button">Refresh</button>
+        <button id="refresh" class="btn" type="button" hidden>Refresh</button>
       </div>
     </header>
+
+    <nav class="nav" aria-label="Screens">
+      <a class="nav-link" href="#/balances" data-screen="balances">Balances</a>
+      <a class="nav-link" href="#/accounts" data-screen="accounts">Accounts</a>
+    </nav>
 
     <main id="main">
       <section id="gate" hidden></section>
       <section id="notice" class="notice" role="status" hidden></section>
-      <section id="totals" class="totals" aria-label="Totals per currency"></section>
-      <section class="accounts-block" aria-label="Accounts">
-        <div id="view-toggle" class="list-tools" role="group" aria-label="Group accounts by" hidden>
-          <div class="segmented">
-            <button type="button" class="seg-btn" data-view="type" aria-pressed="true">By type</button>
-            <button type="button" class="seg-btn" data-view="bank" aria-pressed="false">By bank</button>
+
+      <div id="screen-balances" class="screen">
+        <section id="totals" class="totals" aria-label="Totals per currency"></section>
+        <section class="accounts-block" aria-label="Accounts">
+          <div id="view-toggle" class="list-tools" role="group" aria-label="Group accounts by" hidden>
+            <div class="segmented">
+              <button type="button" class="seg-btn" data-view="type" aria-pressed="true">By type</button>
+              <button type="button" class="seg-btn" data-view="bank" aria-pressed="false">By bank</button>
+            </div>
           </div>
+          <div id="accounts" class="accounts"></div>
+        </section>
+      </div>
+
+      <div id="screen-accounts" class="screen" hidden>
+        <nav id="account-picker" class="chips" aria-label="Choose an account"></nav>
+        <div class="activity-bar">
+          <div id="activity-head" class="activity-head"></div>
+          <nav id="period-picker" class="month-nav" aria-label="Month"></nav>
         </div>
-        <div id="accounts" class="accounts"></div>
-      </section>
+        <section id="activity-tiles" class="totals" aria-label="Totals for the period"></section>
+        <section id="activity-list" class="txns" aria-label="Transactions"></section>
+      </div>
     </main>
 
     <footer class="footer">

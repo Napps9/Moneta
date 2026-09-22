@@ -53,7 +53,7 @@ console.log(
 );
 
 const server = http.createServer(
-  createRequestHandler({ service: runtime.service, auth: runtime.auth, publicDir: path.join(here, 'public') }),
+  createRequestHandler({ service: runtime.service, activity: runtime.activity, auth: runtime.auth, publicDir: path.join(here, 'public') }),
 );
 
 server.listen(port, host, () => {

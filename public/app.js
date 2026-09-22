@@ -1,37 +1,140 @@
-const totalsEl = document.getElementById('totals');
-const accountsEl = document.getElementById('accounts');
-const noticeEl = document.getElementById('notice');
-const gateEl = document.getElementById('gate');
-const updatedEl = document.getElementById('updated');
-const refreshBtn = document.getElementById('refresh');
-const lockBtn = document.getElementById('lock');
-const cacheHintEl = document.getElementById('cache-hint');
+const $ = (id) => document.getElementById(id);
 
-const viewToggleEl = document.getElementById('view-toggle');
-const editorEl = document.getElementById('editor');
-const editorForm = document.getElementById('editor-form');
-const editorTitle = document.getElementById('editor-title');
-const editorSub = document.getElementById('editor-sub');
-const editorGroup = document.getElementById('editor-group');
-const editorBalance = document.getElementById('editor-balance');
-const editorLimitField = document.getElementById('editor-limit-field');
-const editorLimit = document.getElementById('editor-limit');
-const editorExplain = document.getElementById('editor-explain');
-const editorError = document.getElementById('editor-error');
-const editorHint = document.getElementById('editor-hint');
-const editorCancel = document.getElementById('editor-cancel');
-const editorSave = document.getElementById('editor-save');
+const totalsEl = $('totals');
+const accountsEl = $('accounts');
+const noticeEl = $('notice');
+const gateEl = $('gate');
+const updatedEl = $('updated');
+const refreshBtn = $('refresh');
+const lockBtn = $('lock');
+const cacheHintEl = $('cache-hint');
+const viewToggleEl = $('view-toggle');
+const screenBalancesEl = $('screen-balances');
+const screenAccountsEl = $('screen-accounts');
+const navLinks = [...document.querySelectorAll('.nav-link')];
+const pickerEl = $('account-picker');
+const periodPickerEl = $('period-picker');
+const activityHeadEl = $('activity-head');
+const activityTilesEl = $('activity-tiles');
+const activityListEl = $('activity-list');
+const editorEl = $('editor');
+const editorForm = $('editor-form');
+const editorTitle = $('editor-title');
+const editorSub = $('editor-sub');
+const editorGroup = $('editor-group');
+const editorBalance = $('editor-balance');
+const editorLimitField = $('editor-limit-field');
+const editorLimit = $('editor-limit');
+const editorExplain = $('editor-explain');
+const editorError = $('editor-error');
+const editorHint = $('editor-hint');
+const editorCancel = $('editor-cancel');
+const editorSave = $('editor-save');
 
 const AUTO_RELOAD_MS = 60_000;
 const PASSWORD_KEY = 'moneta.password';
 const VIEW_KEY = 'moneta.view';
 const SETTINGS_KEY = 'moneta.settings';
+const TRANSACTIONS_PAGE = 100;
 
 const TREATMENT_HELP = {
   reported: 'Uses the number exactly as Lunch Flow reports it.',
   negate: 'Lunch Flow reports what you owe as a positive number. It will be shown as negative and subtracted from the totals.',
   'credit-limit': 'Lunch Flow reports what is left to spend. What you owe is the credit limit minus that, shown as negative.',
 };
+
+const STATUS = {
+  ACTIVE: { label: 'Active', kind: 'good' },
+  DISCONNECTED: { label: 'Disconnected', kind: 'warning' },
+  ERROR: { label: 'Error', kind: 'critical' },
+};
+
+// ---------- calendar months (in the viewer's local time) ----------
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MONTHS_BACK = 24;
+const localIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const currentMonth = () => monthKey(new Date());
+const splitMonth = (key) => key.split('-').map(Number);
+
+function periodRange(key) {
+  const [year, month] = splitMonth(key);
+  return { from: localIso(new Date(year, month - 1, 1)), to: localIso(new Date(year, month, 0)) };
+}
+
+function shiftMonth(key, n) {
+  const [year, month] = splitMonth(key);
+  return monthKey(new Date(year, month - 1 + n, 1));
+}
+
+function formatMonth(key) {
+  const [year, month] = splitMonth(key);
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+const parseIso = (iso) => new Date(`${iso}T00:00:00`);
+
+function formatDay(iso, { weekday = true } = {}) {
+  const date = parseIso(iso);
+  const options = { day: 'numeric', month: 'short' };
+  if (weekday) options.weekday = 'short';
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = 'numeric';
+  return date.toLocaleDateString(undefined, options);
+}
+
+// ---------- routing ----------
+
+function parseHash() {
+  const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  const now = currentMonth();
+  if (parts[0] === 'accounts') {
+    let accountId = null;
+    try {
+      accountId = parts[1] ? decodeURIComponent(parts[1]) : null;
+    } catch {
+      accountId = null;
+    }
+    const period = MONTH_RE.test(parts[2] || '') && parts[2] <= now ? parts[2] : now;
+    return { screen: 'accounts', accountId, period };
+  }
+  return { screen: 'balances', accountId: null, period: now };
+}
+
+const accountHash = (id, period) => `#/accounts/${encodeURIComponent(String(id))}/${period}`;
+
+// ---------- per-browser conveniences ----------
+
+function readView() {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'bank' ? 'bank' : 'type';
+  } catch {
+    return 'type';
+  }
+}
+function writeView(view) {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    /* per-browser convenience only */
+  }
+}
+function readPassword() {
+  try {
+    return localStorage.getItem(PASSWORD_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+function writePassword(password) {
+  try {
+    if (password) localStorage.setItem(PASSWORD_KEY, password);
+    else localStorage.removeItem(PASSWORD_KEY);
+  } catch {
+    /* storage unavailable: the password lives for this page load only */
+  }
+}
+let sessionPassword = '';
 
 // Settings kept in this browser, used when the server has nowhere to store them.
 function readLocalSettings() {
@@ -51,20 +154,7 @@ function writeLocalSettings(accounts) {
   }
 }
 
-function readView() {
-  try {
-    return localStorage.getItem(VIEW_KEY) === 'bank' ? 'bank' : 'type';
-  } catch {
-    return 'type';
-  }
-}
-function writeView(view) {
-  try {
-    localStorage.setItem(VIEW_KEY, view);
-  } catch {
-    /* per-browser convenience only */
-  }
-}
+// ---------- state ----------
 
 const state = {
   data: null,
@@ -75,12 +165,8 @@ const state = {
   settings: { persistent: null, kind: null, error: null, accounts: readLocalSettings() },
   editing: null, // the account open in the editor
   migrated: false,
-};
-
-const STATUS = {
-  ACTIVE: { label: 'Active', kind: 'good' },
-  DISCONNECTED: { label: 'Disconnected', kind: 'warning' },
-  ERROR: { label: 'Error', kind: 'critical' },
+  route: parseHash(),
+  activity: { key: null, data: null, loading: false, error: null, showAll: false },
 };
 
 // ---------- helpers ----------
@@ -100,24 +186,6 @@ function el(tag, attrs = {}, ...children) {
   }
   return node;
 }
-
-// The password is kept in this browser only, as a convenience so the page opens straight to balances.
-function readPassword() {
-  try {
-    return localStorage.getItem(PASSWORD_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-function writePassword(password) {
-  try {
-    if (password) localStorage.setItem(PASSWORD_KEY, password);
-    else localStorage.removeItem(PASSWORD_KEY);
-  } catch {
-    /* storage unavailable: the password lives for this page load only */
-  }
-}
-let sessionPassword = '';
 
 const formatters = new Map();
 
@@ -144,6 +212,11 @@ function formatMoney(amount, currency) {
   return moneyFormatter(currency).format(amount);
 }
 
+function formatSigned(amount, currency) {
+  if (amount == null || Number.isNaN(amount)) return '—';
+  return `${amount > 0 ? '+' : ''}${formatMoney(amount, currency)}`;
+}
+
 function relativeTime(iso) {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
@@ -162,6 +235,17 @@ function plural(count, singular, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+function apiHeaders(extra = {}) {
+  const headers = { accept: 'application/json', ...extra };
+  const password = sessionPassword || readPassword();
+  if (password) headers.authorization = `Bearer ${password}`;
+  // Until the server says it stores settings itself, send the ones kept in this browser.
+  if (state.settings.persistent !== true && Object.keys(state.settings.accounts).length > 0) {
+    headers['x-moneta-settings'] = JSON.stringify({ accounts: state.settings.accounts });
+  }
+  return headers;
+}
+
 function groupByInstitution(accounts) {
   const groups = new Map();
   for (const account of accounts) {
@@ -174,7 +258,13 @@ function groupByInstitution(accounts) {
   return [...groups.values()];
 }
 
-// ---------- rendering ----------
+function selectedAccount() {
+  if (!state.data || state.data.accounts.length === 0) return null;
+  const wanted = state.route.accountId;
+  return state.data.accounts.find((account) => String(account.id) === String(wanted)) || state.data.accounts[0];
+}
+
+// ---------- shared rendering ----------
 
 function renderLogo(group, size = '') {
   const suffix = size ? `--${size}` : '';
@@ -223,6 +313,38 @@ function pencilIcon() {
   return svg;
 }
 
+function skeletonTile() {
+  return el(
+    'div',
+    { class: 'tile', 'aria-hidden': 'true' },
+    el('div', { class: 'tile-label skeleton', text: 'Total' }),
+    el('div', { class: 'tile-value skeleton', text: '0,000.00' }),
+    el('div', { class: 'tile-meta skeleton', text: 'accounts' }),
+  );
+}
+
+function fitTileValues(container) {
+  for (const node of container.querySelectorAll('.tile-value:not(.skeleton)')) {
+    node.style.fontSize = '';
+    let size = Number.parseFloat(getComputedStyle(node).fontSize);
+    while (size > 18 && node.scrollWidth > node.clientWidth) {
+      size -= 2;
+      node.style.fontSize = `${size}px`;
+    }
+  }
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    fitTileValues(totalsEl);
+    fitTileValues(activityTilesEl);
+  }, 100);
+});
+
+// ---------- balances screen ----------
+
 function renderAccountRow(account, { showInstitution = false } = {}) {
   const inactive = account.status !== 'ACTIVE';
   const meta = [];
@@ -249,10 +371,466 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
     'li',
     { class: `row${inactive ? ' row--inactive' : ''}${showInstitution ? ' row--with-logo' : ''}` },
     showInstitution ? renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'small') : null,
-    el('div', { class: 'row-main' }, el('div', { class: 'row-name', text: account.name }), el('div', { class: 'row-meta' }, meta)),
+    el(
+      'div',
+      { class: 'row-main' },
+      el('a', { class: 'row-name', href: accountHash(account.id, state.route.period), text: account.name, title: 'See income and outgoings' }),
+      el('div', { class: 'row-meta' }, meta),
+    ),
     amount,
     el('button', { class: 'row-edit', type: 'button', 'aria-label': `Edit ${account.name}`, title: 'Edit', onclick: () => openEditor(account) }, pencilIcon()),
   );
+}
+
+function renderInstitution(group) {
+  return el(
+    'section',
+    { class: 'institution', 'aria-label': group.name },
+    el(
+      'div',
+      { class: 'institution-head' },
+      renderLogo(group),
+      el('h2', { text: group.name }),
+      el('span', { class: 'institution-count', text: plural(group.accounts.length, 'account') }),
+    ),
+    el('ul', { class: 'rows' }, group.accounts.map((account) => renderAccountRow(account))),
+  );
+}
+
+function renderGroup(group, accounts) {
+  const members = accounts.filter((account) => account.group === group.id);
+  if (members.length === 0) return null;
+  return el(
+    'section',
+    { class: 'group', 'aria-label': group.label },
+    el(
+      'div',
+      { class: 'group-head' },
+      el('div', { class: 'group-title' }, el('h2', { text: group.label }), el('span', { class: 'group-count', text: plural(members.length, 'account') })),
+      renderTotals(group.totals),
+    ),
+    el('ul', { class: 'rows' }, members.map((account) => renderAccountRow(account, { showInstitution: true }))),
+  );
+}
+
+function renderTile(total, hero) {
+  const label = total.currency ? `Total in ${total.currency}` : 'Total (unknown currency)';
+  const metaParts = [plural(total.accountCount, 'account')];
+  if (total.available != null && total.available !== total.current) {
+    metaParts.push(`${formatMoney(total.available, total.currency)} available`);
+  }
+  if (total.excludedCount > 0) metaParts.push(`${plural(total.excludedCount, 'account')} not counted`);
+
+  return el(
+    'div',
+    { class: `tile${hero ? ' tile--hero' : ''}` },
+    el('div', { class: 'tile-label', text: label }),
+    el('div', { class: 'tile-value', text: formatMoney(total.current, total.currency) }),
+    el('div', { class: 'tile-meta', text: metaParts.join(' · ') }),
+  );
+}
+
+function renderViewToggle() {
+  const hasGroups = Boolean(state.data && Array.isArray(state.data.groups) && state.data.groups.length > 0);
+  viewToggleEl.hidden = !hasGroups;
+  for (const button of viewToggleEl.querySelectorAll('.seg-btn')) {
+    button.setAttribute('aria-pressed', button.dataset.view === state.view ? 'true' : 'false');
+  }
+}
+
+function renderBalancesSkeleton() {
+  viewToggleEl.hidden = true;
+  totalsEl.replaceChildren(skeletonTile(), skeletonTile());
+  accountsEl.replaceChildren(
+    ...[0, 1].map(() =>
+      el(
+        'section',
+        { class: 'institution', 'aria-hidden': 'true' },
+        el('div', { class: 'institution-head' }, el('div', { class: 'logo-fallback skeleton' }), el('h2', { class: 'skeleton', text: 'Institution' })),
+        el(
+          'ul',
+          { class: 'rows' },
+          [0, 1].map(() =>
+            el(
+              'li',
+              { class: 'row' },
+              el('div', { class: 'row-main' }, el('div', { class: 'row-name skeleton', text: 'Account name' })),
+              el('div', { class: 'row-amount skeleton', text: '0,000.00' }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderBalancesData() {
+  const { data } = state;
+  if (data.totals.length === 0) {
+    totalsEl.replaceChildren(
+      el(
+        'div',
+        { class: 'tile tile--empty' },
+        el('div', { class: 'tile-value', text: data.accounts.length === 0 ? 'No accounts connected yet.' : 'No balances available.' }),
+        el('div', {
+          class: 'tile-meta',
+          text:
+            data.accounts.length === 0
+              ? 'Connect a bank in Lunch Flow and refresh this page.'
+              : 'Lunch Flow returned accounts but no balances. Try refreshing in a moment.',
+        }),
+      ),
+    );
+  } else {
+    // A single currency gets the hero treatment; several currencies are peers.
+    const hero = data.totals.length === 1;
+    totalsEl.replaceChildren(...data.totals.map((total) => renderTile(total, hero)));
+  }
+  fitTileValues(totalsEl);
+
+  renderViewToggle();
+  const byType = state.view === 'type' && Array.isArray(data.groups) && data.groups.length > 0;
+  if (byType) {
+    accountsEl.replaceChildren(...data.groups.map((group) => renderGroup(group, data.accounts)).filter(Boolean));
+  } else {
+    accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
+  }
+}
+
+function renderBalancesScreen() {
+  if (state.data) renderBalancesData();
+  else if (state.loading) renderBalancesSkeleton();
+  else {
+    viewToggleEl.hidden = true;
+    totalsEl.replaceChildren();
+    accountsEl.replaceChildren();
+  }
+}
+
+// ---------- accounts screen ----------
+
+function renderPicker(selected) {
+  if (!state.data) {
+    pickerEl.replaceChildren(...[0, 1, 2].map(() => el('span', { class: 'chip skeleton', text: 'Account name' })));
+    return;
+  }
+  pickerEl.replaceChildren(
+    ...state.data.accounts.map((account) =>
+      el(
+        'a',
+        {
+          class: 'chip',
+          href: accountHash(account.id, state.route.period),
+          'aria-current': selected && String(selected.id) === String(account.id) ? 'true' : 'false',
+          title: `${account.name} · ${account.institutionName}`,
+        },
+        renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'chip'),
+        el('span', { text: account.name }),
+      ),
+    ),
+  );
+}
+
+function renderPeriodPicker(selected) {
+  const month = state.route.period;
+  const now = currentMonth();
+  const target = (key) => (selected ? accountHash(selected.id, key) : '#/accounts');
+
+  const options = [];
+  for (let back = 0; back < MONTHS_BACK; back += 1) {
+    const key = shiftMonth(now, -back);
+    options.push(el('option', { value: key, text: formatMonth(key), selected: key === month }));
+  }
+  if (!options.some((option) => option.value === month)) {
+    options.push(el('option', { value: month, text: formatMonth(month), selected: true }));
+  }
+
+  periodPickerEl.replaceChildren(
+    el('a', { class: 'month-btn', href: target(shiftMonth(month, -1)), 'aria-label': `Previous month, ${formatMonth(shiftMonth(month, -1))}`, text: '‹' }),
+    el(
+      'select',
+      {
+        class: 'month-select',
+        'aria-label': 'Month',
+        onchange: (event) => {
+          location.hash = target(event.target.value);
+        },
+      },
+      options,
+    ),
+    month < now
+      ? el('a', { class: 'month-btn', href: target(shiftMonth(month, 1)), 'aria-label': `Next month, ${formatMonth(shiftMonth(month, 1))}`, text: '›' })
+      : el('span', { class: 'month-btn month-btn--disabled', 'aria-hidden': 'true', text: '›' }),
+  );
+}
+
+function renderActivityHead(account) {
+  if (!account) {
+    activityHeadEl.replaceChildren();
+    return;
+  }
+  const month = state.route.period;
+  const suffix = month === currentMonth() ? ' · month so far' : '';
+  activityHeadEl.replaceChildren(
+    el('h2', { text: account.name }),
+    el('span', { text: `${account.institutionName} · ${formatMonth(month)}${suffix}` }),
+  );
+}
+
+function statTile(label, value, meta, extraClass = '') {
+  return el(
+    'div',
+    { class: `tile${extraClass ? ` ${extraClass}` : ''}` },
+    el('div', { class: 'tile-label', text: label }),
+    el('div', { class: 'tile-value', text: value }),
+    el('div', { class: 'tile-meta', text: meta }),
+  );
+}
+
+function renderActivityTiles(data) {
+  const currency = data.currency;
+  const inCount = data.transactions.filter((t) => t.amount >= 0).length;
+  const outCount = data.transactions.length - inCount;
+  const closingLabel = data.closingIsCurrent ? 'Balance now' : 'Month-end balance';
+  let closingMeta;
+  if (data.closingBalance == null) closingMeta = data.account.error ? 'Balance unavailable' : 'No balance reported';
+  else {
+    closingMeta = `Opened at ${formatMoney(data.openingBalance, currency)}`;
+    closingMeta += data.closingIsCurrent ? ' · month in progress' : ` · closed ${formatDay(data.period.to, { weekday: false })}`;
+  }
+  activityTilesEl.replaceChildren(
+    statTile('Money in', formatMoney(data.income, currency), plural(inCount, 'payment')),
+    statTile('Money out', formatMoney(data.outgoings, currency), plural(outCount, 'payment')),
+    statTile('Net', formatSigned(data.net, currency), data.net >= 0 ? 'More in than out' : 'More out than in'),
+    statTile(closingLabel, formatMoney(data.closingBalance, currency), closingMeta),
+  );
+  fitTileValues(activityTilesEl);
+}
+
+function renderTransactions(data) {
+  if (data.transactions.length === 0) {
+    activityListEl.replaceChildren(el('p', { class: 'txns-empty', text: 'No transactions in this period.' }));
+    return;
+  }
+  const shown = state.activity.showAll ? data.transactions : data.transactions.slice(0, TRANSACTIONS_PAGE);
+  const nodes = [];
+  let lastDate = null;
+  for (const t of shown) {
+    if (t.date !== lastDate) {
+      nodes.push(el('h3', { class: 'txn-date', text: formatDay(t.date) }));
+      lastDate = t.date;
+    }
+    const meta = [];
+    if (t.pending) meta.push(el('span', { class: 'badge badge--warning', text: 'Pending' }));
+    if (t.category) meta.push(el('span', { text: t.category }));
+    if (t.merchant && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
+    nodes.push(
+      el(
+        'div',
+        { class: 'txn' },
+        el('div', { class: 'txn-main' }, el('div', { class: 'txn-desc', text: t.merchant || t.description || 'Transaction' }), el('div', { class: 'row-meta' }, meta)),
+        el('div', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount, t.currency || data.currency) }),
+      ),
+    );
+  }
+  if (shown.length < data.transactions.length) {
+    nodes.push(
+      el(
+        'div',
+        { class: 'txns-more' },
+        el('button', {
+          class: 'btn btn--ghost',
+          type: 'button',
+          text: `Show all ${data.transactions.length} transactions`,
+          onclick: () => {
+            state.activity.showAll = true;
+            render();
+          },
+        }),
+      ),
+    );
+  }
+  activityListEl.replaceChildren(...nodes);
+}
+
+function renderAccountsScreen() {
+  const account = selectedAccount();
+  renderPicker(account);
+  renderPeriodPicker(account);
+
+  if (!state.data) {
+    renderActivityHead(null);
+    activityTilesEl.replaceChildren(...(state.loading ? [skeletonTile(), skeletonTile(), skeletonTile(), skeletonTile()] : []));
+    activityListEl.replaceChildren();
+    return;
+  }
+  if (!account) {
+    renderActivityHead(null);
+    activityTilesEl.replaceChildren(
+      el('div', { class: 'tile tile--empty' }, el('div', { class: 'tile-value', text: 'No accounts connected yet.' }), el('div', { class: 'tile-meta', text: 'Connect a bank in Lunch Flow and refresh this page.' })),
+    );
+    activityListEl.replaceChildren();
+    return;
+  }
+
+  const activity = state.activity;
+  const current = activity.data && String(activity.data.account.id) === String(account.id) ? activity.data : null;
+  renderActivityHead(account);
+  if (current) {
+    renderActivityTiles(current);
+    renderTransactions(current);
+  } else if (activity.loading) {
+    activityTilesEl.replaceChildren(skeletonTile(), skeletonTile(), skeletonTile(), skeletonTile());
+    activityListEl.replaceChildren(
+      ...[0, 1, 2, 3].map(() =>
+        el('div', { class: 'txn' }, el('div', { class: 'txn-main' }, el('div', { class: 'txn-desc skeleton', text: 'Merchant name' })), el('div', { class: 'txn-amount skeleton', text: '000.00' })),
+      ),
+    );
+  } else {
+    activityTilesEl.replaceChildren();
+    activityListEl.replaceChildren();
+  }
+}
+
+// ---------- notices, header, gate ----------
+
+function renderNotice() {
+  const { data, error, loading } = state;
+  const onAccounts = state.route.screen === 'accounts';
+  let kind = null;
+  let title = '';
+  let detail = '';
+
+  if (error && !data) {
+    kind = 'critical';
+    title = 'Could not load balances.';
+    detail = error;
+  } else if (onAccounts && state.activity.error) {
+    kind = state.activity.data ? 'warning' : 'critical';
+    title = state.activity.data ? 'Could not refresh the transactions.' : 'Could not load the transactions.';
+    detail = state.activity.error;
+  } else if (error && data) {
+    kind = 'warning';
+    title = 'Could not refresh.';
+    detail = `${error} Showing balances from ${relativeTime(data.fetchedAt)}.`;
+  } else if (data && data.stale) {
+    kind = 'warning';
+    title = 'Showing cached balances.';
+    detail = data.error ? `The last refresh failed: ${data.error}` : 'The last refresh failed.';
+  } else if (!onAccounts && data && data.partial) {
+    kind = 'warning';
+    title = 'Some balances are missing.';
+    detail = 'Lunch Flow could not return a balance for every account. Affected accounts are marked below.';
+  }
+
+  if (!kind || (loading && !data) || state.gate) {
+    noticeEl.hidden = true;
+    noticeEl.replaceChildren();
+    noticeEl.className = 'notice';
+    return;
+  }
+  noticeEl.className = `notice notice--${kind}`;
+  noticeEl.replaceChildren(
+    el('span', { class: 'notice-icon', 'aria-hidden': 'true' }),
+    el('div', {}, el('strong', { text: title }), ' ', detail),
+  );
+  noticeEl.hidden = false;
+}
+
+function renderUpdated() {
+  if (state.gate) {
+    updatedEl.textContent = '';
+    return;
+  }
+  const onAccounts = state.route.screen === 'accounts';
+  const busy = state.loading || (onAccounts && state.activity.loading);
+  const stamp = onAccounts && state.activity.data ? state.activity.data.fetchedAt : state.data ? state.data.fetchedAt : null;
+  if (!stamp) {
+    updatedEl.textContent = busy ? 'Loading…' : '';
+    return;
+  }
+  updatedEl.textContent = `Updated ${relativeTime(stamp)}`;
+  updatedEl.title = new Date(stamp).toLocaleString();
+}
+
+function renderGate() {
+  const gate = state.gate;
+  if (gate.kind === 'unconfigured') {
+    gateEl.replaceChildren(
+      el('div', { class: 'gate' }, el('h2', { text: 'Password not set' }), el('p', { text: gate.message })),
+    );
+  } else {
+    const input = el('input', {
+      id: 'password',
+      type: 'password',
+      autocomplete: 'current-password',
+      placeholder: 'Password',
+      required: true,
+    });
+    const form = el(
+      'form',
+      {
+        class: 'gate',
+        onsubmit: (event) => {
+          event.preventDefault();
+          const value = input.value.trim();
+          if (!value) return;
+          sessionPassword = value;
+          writePassword(value);
+          state.gate = null;
+          load();
+        },
+      },
+      el('h2', { text: 'Enter the password' }),
+      el('p', { text: 'This page shows bank balances, so it is locked with the password set for this deployment.' }),
+      // Hidden username lets password managers file the entry under this site.
+      el('input', { type: 'text', name: 'username', autocomplete: 'username', value: 'moneta', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' }),
+      el('label', { for: 'password', class: 'sr-only', text: 'Password' }),
+      el('div', { class: 'gate-row' }, input, el('button', { class: 'btn', type: 'submit', text: 'Unlock' })),
+      gate.message ? el('p', { class: 'gate-error', role: 'alert', text: gate.message }) : null,
+    );
+    gateEl.replaceChildren(form);
+    input.focus();
+  }
+  gateEl.hidden = false;
+}
+
+function render() {
+  const gated = Boolean(state.gate);
+  const onAccounts = state.route.screen === 'accounts';
+  for (const link of navLinks) {
+    link.setAttribute('aria-current', link.dataset.screen === state.route.screen ? 'page' : 'false');
+  }
+  const busy = state.loading || (onAccounts && state.activity.loading);
+  refreshBtn.hidden = gated;
+  refreshBtn.disabled = busy;
+  refreshBtn.textContent = busy ? 'Refreshing…' : 'Refresh';
+  lockBtn.hidden = gated || !(sessionPassword || readPassword());
+  renderUpdated();
+  renderNotice();
+
+  if (gated) {
+    renderGate();
+    screenBalancesEl.hidden = true;
+    screenAccountsEl.hidden = true;
+    cacheHintEl.textContent = '';
+    return;
+  }
+  gateEl.hidden = true;
+  gateEl.replaceChildren();
+  screenBalancesEl.hidden = onAccounts;
+  screenAccountsEl.hidden = !onAccounts;
+
+  if (state.data && state.data.ttlSeconds > 0) {
+    const minutes = Math.round(state.data.ttlSeconds / 60);
+    cacheHintEl.textContent =
+      minutes >= 1 ? `Data is cached for ${plural(minutes, 'minute')}. Refresh fetches it again.` : 'Refresh fetches the data again.';
+  } else {
+    cacheHintEl.textContent = '';
+  }
+
+  if (onAccounts) renderAccountsScreen();
+  else renderBalancesScreen();
 }
 
 // ---------- per-account editor ----------
@@ -303,10 +881,7 @@ function closeEditor() {
 
 async function saveSettings(accounts) {
   if (state.settings.persistent === true) {
-    const headers = { 'content-type': 'application/json', accept: 'application/json' };
-    const password = sessionPassword || readPassword();
-    if (password) headers.authorization = `Bearer ${password}`;
-    const res = await fetch('/api/settings', { method: 'PUT', headers, body: JSON.stringify({ accounts }) });
+    const res = await fetch('/api/settings', { method: 'PUT', headers: apiHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ accounts }) });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body && (body.message || body.error)) || `Saving failed with status ${res.status}`);
     state.settings = { ...state.settings, persistent: body.persistent, kind: body.kind, error: body.error ?? null, accounts: body.accounts };
@@ -352,6 +927,7 @@ async function submitEditor(event) {
     return;
   }
   closeEditor();
+  state.activity = { ...state.activity, key: null }; // treatments changed: recompute closing balances
   load();
 }
 
@@ -366,288 +942,25 @@ editorEl.addEventListener('close', () => {
   state.editing = null;
 });
 
-function renderGroup(group, accounts) {
-  const members = accounts.filter((account) => account.group === group.id);
-  if (members.length === 0) return null;
-  return el(
-    'section',
-    { class: 'group', 'aria-label': group.label },
-    el(
-      'div',
-      { class: 'group-head' },
-      el('div', { class: 'group-title' }, el('h2', { text: group.label }), el('span', { class: 'group-count', text: plural(members.length, 'account') })),
-      renderTotals(group.totals),
-    ),
-    el('ul', { class: 'rows' }, members.map((account) => renderAccountRow(account, { showInstitution: true }))),
-  );
-}
-
-function renderViewToggle() {
-  const hasGroups = Boolean(state.data && Array.isArray(state.data.groups) && state.data.groups.length > 0);
-  viewToggleEl.hidden = !hasGroups;
-  for (const button of viewToggleEl.querySelectorAll('.seg-btn')) {
-    button.setAttribute('aria-pressed', button.dataset.view === state.view ? 'true' : 'false');
-  }
-}
-
-function renderInstitution(group) {
-  return el(
-    'section',
-    { class: 'institution', 'aria-label': group.name },
-    el(
-      'div',
-      { class: 'institution-head' },
-      renderLogo(group),
-      el('h2', { text: group.name }),
-      el('span', { class: 'institution-count', text: plural(group.accounts.length, 'account') }),
-    ),
-    el('ul', { class: 'rows' }, group.accounts.map(renderAccountRow)),
-  );
-}
-
-function renderTile(total, hero) {
-  const label = total.currency ? `Total in ${total.currency}` : 'Total (unknown currency)';
-  const metaParts = [plural(total.accountCount, 'account')];
-  if (total.available != null && total.available !== total.current) {
-    metaParts.push(`${formatMoney(total.available, total.currency)} available`);
-  }
-  if (total.excludedCount > 0) metaParts.push(`${plural(total.excludedCount, 'account')} not counted`);
-
-  return el(
-    'div',
-    { class: `tile${hero ? ' tile--hero' : ''}` },
-    el('div', { class: 'tile-label', text: label }),
-    el('div', { class: 'tile-value', text: formatMoney(total.current, total.currency) }),
-    el('div', { class: 'tile-meta', text: metaParts.join(' · ') }),
-  );
-}
-
-/** Shrink a tile's value until it fits on one line, so a big number never wraps mid-digit. */
-function fitTileValues() {
-  for (const node of totalsEl.querySelectorAll('.tile-value')) {
-    node.style.fontSize = '';
-    let size = Number.parseFloat(getComputedStyle(node).fontSize);
-    while (size > 18 && node.scrollWidth > node.clientWidth) {
-      size -= 2;
-      node.style.fontSize = `${size}px`;
-    }
-  }
-}
-
-let resizeTimer = null;
-window.addEventListener('resize', () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(fitTileValues, 100);
-});
-
-function renderSkeletons() {
-  totalsEl.replaceChildren(
-    ...[0, 1].map(() =>
-      el(
-        'div',
-        { class: 'tile', 'aria-hidden': 'true' },
-        el('div', { class: 'tile-label skeleton', text: 'Total' }),
-        el('div', { class: 'tile-value skeleton', text: '0,000.00' }),
-        el('div', { class: 'tile-meta skeleton', text: 'accounts' }),
-      ),
-    ),
-  );
-  accountsEl.replaceChildren(
-    ...[0, 1].map(() =>
-      el(
-        'section',
-        { class: 'institution', 'aria-hidden': 'true' },
-        el('div', { class: 'institution-head' }, el('div', { class: 'logo-fallback skeleton' }), el('h2', { class: 'skeleton', text: 'Institution' })),
-        el(
-          'ul',
-          { class: 'rows' },
-          [0, 1].map(() =>
-            el(
-              'li',
-              { class: 'row' },
-              el('div', { class: 'row-main' }, el('div', { class: 'row-name skeleton', text: 'Account name' })),
-              el('div', { class: 'row-amount skeleton', text: '0,000.00' }),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-function renderGate() {
-  const gate = state.gate;
-  if (gate.kind === 'unconfigured') {
-    gateEl.replaceChildren(
-      el('div', { class: 'gate' }, el('h2', { text: 'Password not set' }), el('p', { text: gate.message })),
-    );
-  } else {
-    const input = el('input', {
-      id: 'password',
-      type: 'password',
-      autocomplete: 'current-password',
-      placeholder: 'Password',
-      required: true,
-    });
-    const form = el(
-      'form',
-      {
-        class: 'gate',
-        onsubmit: (event) => {
-          event.preventDefault();
-          const value = input.value.trim();
-          if (!value) return;
-          sessionPassword = value;
-          writePassword(value);
-          state.gate = null;
-          load();
-        },
-      },
-      el('h2', { text: 'Enter the password' }),
-      el('p', { text: 'This page shows bank balances, so it is locked with the password set for this deployment.' }),
-      // Hidden username lets password managers file the entry under this site.
-      el('input', { type: 'text', name: 'username', autocomplete: 'username', value: 'moneta', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' }),
-      el('label', { for: 'password', class: 'sr-only', text: 'Password' }),
-      el('div', { class: 'gate-row' }, input, el('button', { class: 'btn', type: 'submit', text: 'Unlock' })),
-      gate.message ? el('p', { class: 'gate-error', role: 'alert', text: gate.message }) : null,
-    );
-    gateEl.replaceChildren(form);
-    input.focus();
-  }
-  gateEl.hidden = false;
-}
-
-function renderNotice() {
-  const { data, error, loading } = state;
-  let kind = null;
-  let title = '';
-  let detail = '';
-
-  if (error && !data) {
-    kind = 'critical';
-    title = 'Could not load balances.';
-    detail = error;
-  } else if (error && data) {
-    kind = 'warning';
-    title = 'Could not refresh.';
-    detail = `${error} Showing balances from ${relativeTime(data.fetchedAt)}.`;
-  } else if (data && data.stale) {
-    kind = 'warning';
-    title = 'Showing cached balances.';
-    detail = data.error ? `The last refresh failed: ${data.error}` : 'The last refresh failed.';
-  } else if (data && data.partial) {
-    kind = 'warning';
-    title = 'Some balances are missing.';
-    detail = 'Lunch Flow could not return a balance for every account. Affected accounts are marked below.';
-  }
-
-  if (!kind || loading || state.gate) {
-    noticeEl.hidden = true;
-    noticeEl.replaceChildren();
-    noticeEl.className = 'notice';
-    return;
-  }
-  noticeEl.className = `notice notice--${kind}`;
-  noticeEl.replaceChildren(
-    el('span', { class: 'notice-icon', 'aria-hidden': 'true' }),
-    el('div', {}, el('strong', { text: title }), ' ', detail),
-  );
-  noticeEl.hidden = false;
-}
-
-function renderUpdated() {
-  const { data, loading } = state;
-  if (state.gate) {
-    updatedEl.textContent = '';
-    return;
-  }
-  if (loading && !data) {
-    updatedEl.textContent = 'Loading…';
-    return;
-  }
-  if (!data) {
-    updatedEl.textContent = '';
-    return;
-  }
-  updatedEl.textContent = `Updated ${relativeTime(data.fetchedAt)}`;
-  updatedEl.title = new Date(data.fetchedAt).toLocaleString();
-}
-
-function renderData() {
-  const { data } = state;
-  if (!data) return;
-
-  if (data.totals.length === 0) {
-    totalsEl.replaceChildren(
-      el(
-        'div',
-        { class: 'tile tile--empty' },
-        el('div', { class: 'tile-value', text: data.accounts.length === 0 ? 'No accounts connected yet.' : 'No balances available.' }),
-        el('div', {
-          class: 'tile-meta',
-          text:
-            data.accounts.length === 0
-              ? 'Connect a bank in Lunch Flow and refresh this page.'
-              : 'Lunch Flow returned accounts but no balances. Try refreshing in a moment.',
-        }),
-      ),
-    );
-  } else {
-    // A single currency gets the hero treatment; several currencies are peers.
-    const hero = data.totals.length === 1;
-    totalsEl.replaceChildren(...data.totals.map((total) => renderTile(total, hero)));
-  }
-  fitTileValues();
-
-  renderViewToggle();
-  const byType = state.view === 'type' && Array.isArray(data.groups) && data.groups.length > 0;
-  if (byType) {
-    accountsEl.replaceChildren(...data.groups.map((group) => renderGroup(group, data.accounts)).filter(Boolean));
-  } else {
-    accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
-  }
-
-  if (data.ttlSeconds > 0) {
-    const minutes = Math.round(data.ttlSeconds / 60);
-    cacheHintEl.textContent =
-      minutes >= 1 ? `Balances are cached for ${plural(minutes, 'minute')}. Refresh fetches them again.` : 'Refresh fetches balances again.';
-  } else {
-    cacheHintEl.textContent = '';
-  }
-}
-
-function render() {
-  const gated = Boolean(state.gate);
-  refreshBtn.hidden = gated;
-  refreshBtn.disabled = state.loading;
-  refreshBtn.textContent = state.loading ? 'Refreshing…' : 'Refresh';
-  lockBtn.hidden = gated || !(sessionPassword || readPassword());
-  renderUpdated();
-  renderNotice();
-
-  if (gated) {
-    renderGate();
-    totalsEl.replaceChildren();
-    accountsEl.replaceChildren();
-    viewToggleEl.hidden = true;
-    cacheHintEl.textContent = '';
-    return;
-  }
-  gateEl.hidden = true;
-  gateEl.replaceChildren();
-
-  if (state.data) renderData();
-  else if (state.loading) {
-    viewToggleEl.hidden = true;
-    renderSkeletons();
-  } else {
-    viewToggleEl.hidden = true;
-    totalsEl.replaceChildren();
-    accountsEl.replaceChildren();
-  }
-}
-
 // ---------- data ----------
+
+function handleUnauthorized(res, body, password) {
+  if (res.status === 401) {
+    // Wrong or missing password: forget it and ask.
+    sessionPassword = '';
+    writePassword('');
+    state.data = null;
+    state.activity = { key: null, data: null, loading: false, error: null, showAll: false };
+    state.gate = { kind: 'password', message: password ? 'Wrong password. Try again.' : '' };
+    return true;
+  }
+  if (res.status === 503 && body && body.error === 'Password not configured') {
+    state.data = null;
+    state.gate = { kind: 'unconfigured', message: body.message };
+    return true;
+  }
+  return false;
+}
 
 async function load({ refresh = false } = {}) {
   if (state.loading) return;
@@ -655,30 +968,10 @@ async function load({ refresh = false } = {}) {
   state.error = null;
   render();
   try {
-    const headers = { accept: 'application/json' };
     const password = sessionPassword || readPassword();
-    if (password) headers.authorization = `Bearer ${password}`;
-    // Until the server says it stores settings itself, send the ones kept in this browser.
-    if (state.settings.persistent !== true && Object.keys(state.settings.accounts).length > 0) {
-      headers['x-moneta-settings'] = JSON.stringify({ accounts: state.settings.accounts });
-    }
-
-    const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers });
+    const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers: apiHeaders() });
     const body = await res.json().catch(() => null);
-
-    if (res.status === 401) {
-      // Wrong or missing password: forget it and ask.
-      sessionPassword = '';
-      writePassword('');
-      state.data = null;
-      state.gate = { kind: 'password', message: password ? 'Wrong password. Try again.' : '' };
-      return;
-    }
-    if (res.status === 503 && body && body.error === 'Password not configured') {
-      state.data = null;
-      state.gate = { kind: 'unconfigured', message: body.message };
-      return;
-    }
+    if (handleUnauthorized(res, body, password)) return;
     if (!res.ok) {
       throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
     }
@@ -715,10 +1008,60 @@ async function load({ refresh = false } = {}) {
   } finally {
     state.loading = false;
     render();
+    ensureActivity();
   }
 }
 
-refreshBtn.addEventListener('click', () => load({ refresh: true }));
+async function loadActivity({ account, from, to, key, refresh = false }) {
+  state.activity = { key, data: state.activity.key === key ? state.activity.data : null, loading: true, error: null, showAll: false };
+  render();
+  try {
+    const params = new URLSearchParams({ account: String(account.id), from, to });
+    if (refresh) params.set('refresh', '1');
+    const password = sessionPassword || readPassword();
+    const res = await fetch(`/api/activity?${params}`, { headers: apiHeaders() });
+    const body = await res.json().catch(() => null);
+    if (state.activity.key !== key) return; // the viewer moved on
+    if (handleUnauthorized(res, body, password)) return;
+    if (!res.ok) throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
+    state.activity = { key, data: body, loading: false, error: null, showAll: false };
+  } catch (err) {
+    if (state.activity.key !== key) return;
+    state.activity = { ...state.activity, loading: false, error: err && err.message ? err.message : 'Unknown error' };
+  } finally {
+    if (state.activity.key === key) {
+      state.activity.loading = false;
+      render();
+    }
+  }
+}
+
+/** Load the selected account's activity when the accounts screen needs it. */
+function ensureActivity({ refresh = false, force = false } = {}) {
+  if (state.route.screen !== 'accounts' || !state.data || state.gate) return;
+  const account = selectedAccount();
+  if (!account) return;
+  const { from, to } = periodRange(state.route.period);
+  const key = `${account.id}|${from}|${to}`;
+  if (!refresh && !force && state.activity.key === key && (state.activity.data || state.activity.loading)) return;
+  loadActivity({ account, from, to, key, refresh });
+}
+
+// ---------- wiring ----------
+
+refreshBtn.addEventListener('click', () => {
+  load({ refresh: true });
+  if (state.route.screen === 'accounts') ensureActivity({ refresh: true });
+});
+lockBtn.addEventListener('click', () => {
+  sessionPassword = '';
+  writePassword('');
+  state.data = null;
+  state.error = null;
+  state.activity = { key: null, data: null, loading: false, error: null, showAll: false };
+  state.gate = { kind: 'password', message: '' };
+  render();
+});
 viewToggleEl.addEventListener('click', (event) => {
   const button = event.target.closest('.seg-btn');
   if (!button || button.dataset.view === state.view) return;
@@ -726,18 +1069,17 @@ viewToggleEl.addEventListener('click', (event) => {
   writeView(state.view);
   render();
 });
-lockBtn.addEventListener('click', () => {
-  sessionPassword = '';
-  writePassword('');
-  state.data = null;
-  state.error = null;
-  state.gate = { kind: 'password', message: '' };
+window.addEventListener('hashchange', () => {
+  state.route = parseHash();
   render();
+  ensureActivity();
 });
 
 setInterval(renderUpdated, 30_000);
 setInterval(() => {
-  if (document.visibilityState === 'visible' && !state.gate) load();
+  if (document.visibilityState !== 'visible' || state.gate) return;
+  load();
+  if (state.route.screen === 'accounts') ensureActivity({ force: true });
 }, AUTO_RELOAD_MS);
 
 document.addEventListener('visibilitychange', () => {
@@ -745,4 +1087,5 @@ document.addEventListener('visibilitychange', () => {
   if (Date.now() - new Date(state.data.fetchedAt).getTime() > AUTO_RELOAD_MS) load();
 });
 
+render();
 load();
