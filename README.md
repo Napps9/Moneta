@@ -7,22 +7,20 @@ A small web page that shows the current balance of every bank account connected 
 
 ## Option 1: deploy on Vercel
 
-The repo is ready for Vercel as-is: the page is served from `public/` and the API runs as serverless functions in `api/`. The Vercel URL is public, so the page is protected by a password you choose.
+The repo is ready for Vercel as-is: the page is served from `public/` and the API runs as serverless functions in `api/`.
 
 Before you start, get a Lunch Flow API key: in Lunch Flow, open **Destinations** and create an **API** destination. The key is shown in that destination's settings.
 
 1. Go to [vercel.com/new](https://vercel.com/new), sign in with GitHub, and import this repository. Leave the framework preset on **Other** and the build settings untouched.
-2. Under **Environment Variables**, add:
-   - `LUNCHFLOW_API_KEY`: your Lunch Flow API key.
-   - `MONETA_PASSWORD`: any password you like. The page asks for it once per device.
-3. Click **Deploy**. Open the URL Vercel gives you and enter the password.
+2. Under **Environment Variables**, add `LUNCHFLOW_API_KEY` with your Lunch Flow API key.
+3. Click **Deploy** and open the URL Vercel gives you.
 
 Every push to the repository's default branch redeploys automatically. To try the layout with sample data first, set `LUNCHFLOW_MOCK=1` instead of an API key.
 
 Notes:
 
+- The URL is public: anyone who has it can see the balances. If you ever want to lock it, add a `MONETA_PASSWORD` environment variable and redeploy; the page will then ask for it once per device.
 - Balances are never stored on Vercel and never cached by its CDN; each function instance keeps a short in-memory cache (`CACHE_TTL_SECONDS`, default 5 minutes) and the Refresh button bypasses it.
-- Without `MONETA_PASSWORD`, the deployment refuses to serve balances and the page says why. On your own machine the password is optional.
 
 ## Option 2: hosted on Claude, nothing to run
 
@@ -75,8 +73,8 @@ Settings are read from environment variables, or from a `.env` file next to `ser
 | `HOST` | `127.0.0.1` | Address to bind. Set to `0.0.0.0` to reach it from other devices on your network. |
 | `PORT` | `3000` | Port to listen on. |
 | `CACHE_TTL_SECONDS` | `300` | How long fetched balances are reused before Lunch Flow is called again. |
-| `MONETA_PASSWORD` | unset | Password the page must present before balances are served. Optional locally, required on Vercel. |
-| `MONETA_REQUIRE_PASSWORD` | unset | Set to `1` to refuse to serve balances without a password on other public hosts. |
+| `MONETA_PASSWORD` | unset | Optional. If set, the page asks for this password before showing balances. |
+| `MONETA_REQUIRE_PASSWORD` | unset | Optional. Set to `1` to refuse to serve balances until a password is set. |
 
 ### How it works
 
@@ -126,6 +124,6 @@ test/              tests
 
 ### Security notes
 
-- The self-hosted server binds to `127.0.0.1` by default, so only your machine can reach it. If you expose it anywhere else, set `MONETA_PASSWORD` (and `MONETA_REQUIRE_PASSWORD=1`), as the Vercel deployment does. The password check is timing-safe and slows down wrong guesses, but it is a single shared password, not an account system: pick a long one.
+- The self-hosted server binds to `127.0.0.1` by default, so only your machine can reach it. Anywhere else, whoever can reach the URL can see the balances unless `MONETA_PASSWORD` is set. The password check is timing-safe and slows down wrong guesses, but it is a single shared password, not an account system.
 - The `.env` file is git-ignored. Never commit your API key.
 - The API key is only ever sent to the Lunch Flow API host, in the `x-api-key` header.

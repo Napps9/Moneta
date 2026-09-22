@@ -6,9 +6,10 @@ import http from 'node:http';
 // Each test file runs in its own process, so this does not leak into other tests.
 process.env.LUNCHFLOW_MOCK = '1';
 process.env.VERCEL = '1';
-process.env.MONETA_PASSWORD = 'secret';
+delete process.env.MONETA_PASSWORD;
+delete process.env.MONETA_REQUIRE_PASSWORD;
 
-test('serverless functions serve mock balances behind the password on Vercel', async () => {
+test('serverless functions serve balances openly when no password is configured', async () => {
   const { default: balances } = await import('../api/balances.js');
   const { default: health } = await import('../api/health.js');
 
@@ -17,21 +18,18 @@ test('serverless functions serve mock balances behind the password on Vercel', a
   const base = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    const locked = await fetch(`${base}/api/balances`);
-    assert.equal(locked.status, 401);
-    assert.equal(locked.headers.get('cache-control'), 'no-store');
-
-    const open = await fetch(`${base}/api/balances`, { headers: { authorization: 'Bearer secret' } });
-    assert.equal(open.status, 200);
-    const body = await open.json();
+    const res = await fetch(`${base}/api/balances`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const body = await res.json();
     assert.equal(body.accounts.length, 7);
     assert.ok(body.totals.length >= 2);
 
-    const cached = await (await fetch(`${base}/api/balances`, { headers: { authorization: 'Bearer secret' } })).json();
+    const cached = await (await fetch(`${base}/api/balances`)).json();
     assert.equal(cached.cached, true, 'the cache is shared across invocations of the same instance');
 
     const status = await (await fetch(`${base}/api/health`)).json();
-    assert.deepEqual(status, { ok: true, passwordRequired: true });
+    assert.deepEqual(status, { ok: true, passwordRequired: false });
   } finally {
     server.close();
   }
