@@ -357,6 +357,10 @@ async function submitEditor(event) {
 
 editorForm.addEventListener('submit', submitEditor);
 editorBalance.addEventListener('change', updateEditorFields);
+editorLimit.addEventListener('input', () => {
+  editorError.hidden = true;
+  editorLimit.removeAttribute('aria-invalid');
+});
 editorCancel.addEventListener('click', closeEditor);
 editorEl.addEventListener('close', () => {
   state.editing = null;
