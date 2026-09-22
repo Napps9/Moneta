@@ -15,7 +15,7 @@ Before you start, get a Lunch Flow API key: in Lunch Flow, open **Destinations**
 2. Under **Environment Variables**, add `LUNCHFLOW_API_KEY` with your Lunch Flow API key.
 3. Click **Deploy** and open the URL Vercel gives you.
 
-Every push to the repository's default branch redeploys automatically. To try the layout with sample data first, set `LUNCHFLOW_MOCK=1` instead of an API key.
+Vercel builds every push to `main` as the production deployment. To try the layout with sample data first, set `LUNCHFLOW_MOCK=1` instead of an API key.
 
 Notes:
 
