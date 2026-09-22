@@ -1,0 +1,17 @@
+{
+  "name": "moneta",
+  "version": "0.1.0",
+  "description": "Lightweight web app that shows the balances of the bank accounts connected to your Lunch Flow account",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "mock": "node server.js --mock",
+    "test": "node --test"
+  },
+  "license": "MIT"
+}
