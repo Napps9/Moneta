@@ -24,6 +24,7 @@
     </header>
 
     <main id="main">
+      <section id="gate" hidden></section>
       <section id="notice" class="notice" role="status" hidden></section>
       <section id="totals" class="totals" aria-label="Totals per currency"></section>
       <section id="accounts" class="accounts" aria-label="Accounts"></section>
@@ -32,6 +33,7 @@
     <footer class="footer">
       <span>Balances come from your <a href="https://lunchflow.app" rel="noreferrer">Lunch Flow</a> account.</span>
       <span id="cache-hint"></span>
+      <button id="lock" class="link-btn" type="button" hidden>Lock this page</button>
     </footer>
 
     <script type="module" src="/app.js"></script>

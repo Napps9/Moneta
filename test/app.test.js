@@ -7,6 +7,7 @@ import { createRequestHandler } from '../src/app.js';
 import { createBalanceService } from '../src/balances.js';
 import { createMockClient } from '../src/mock.js';
 import { LunchFlowError } from '../src/lunchflow.js';
+import { createAuth } from '../src/auth.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, '..', 'public');
@@ -76,7 +77,52 @@ test('unsupported methods and unknown API routes are rejected', async () => {
   const missing = await fetch(`${base}/api/nope`);
   assert.equal(missing.status, 404);
   const health = await fetch(`${base}/api/health`);
-  assert.deepEqual(await health.json(), { ok: true });
+  assert.deepEqual(await health.json(), { ok: true, passwordRequired: false });
+});
+
+test('a password protects the API but not the page shell', async () => {
+  const service = createBalanceService({ client: createMockClient({ delayMs: 0 }), logger: silent });
+  const auth = createAuth({ password: 'hunter2' });
+  const { server, base: guarded } = await listen(createRequestHandler({ service, publicDir, auth, logger: silent }));
+  try {
+    assert.equal((await fetch(`${guarded}/api/balances`)).status, 401);
+    assert.equal((await fetch(`${guarded}/api/balances`, { headers: { authorization: 'Bearer nope' } })).status, 401);
+
+    const ok = await fetch(`${guarded}/api/balances`, { headers: { authorization: 'Bearer hunter2' } });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).accounts.length, 7);
+
+    const health = await (await fetch(`${guarded}/api/health`)).json();
+    assert.deepEqual(health, { ok: true, passwordRequired: true });
+
+    assert.equal((await fetch(`${guarded}/`)).status, 200, 'the page itself loads and asks for the password');
+  } finally {
+    server.close();
+  }
+});
+
+test('required protection without a configured password refuses to serve balances', async () => {
+  const service = createBalanceService({ client: createMockClient({ delayMs: 0 }), logger: silent });
+  const auth = createAuth({ password: '', required: true });
+  const { server, base: unset } = await listen(createRequestHandler({ service, publicDir, auth, logger: silent }));
+  try {
+    const res = await fetch(`${unset}/api/balances`, { headers: { authorization: 'Bearer anything' } });
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).error, 'Password not configured');
+  } finally {
+    server.close();
+  }
+});
+
+test('a missing API key is reported instead of crashing', async () => {
+  const { server, base: keyless } = await listen(createRequestHandler({ service: null, publicDir, logger: silent }));
+  try {
+    const res = await fetch(`${keyless}/api/balances`);
+    assert.equal(res.status, 503);
+    assert.match((await res.json()).message, /LUNCHFLOW_API_KEY/);
+  } finally {
+    server.close();
+  }
 });
 
 test('upstream auth failures surface as 502 with a helpful message', async () => {

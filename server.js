@@ -3,17 +3,13 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadEnv } from './src/env.js';
-import { DEFAULT_BASE_URL, createLunchFlowClient } from './src/lunchflow.js';
-import { createMockClient } from './src/mock.js';
-import { createBalanceService } from './src/balances.js';
+import { createRuntime, truthy } from './src/runtime.js';
 import { createRequestHandler } from './src/app.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(path.join(here, '.env'));
 
 const args = new Set(process.argv.slice(2));
-const truthy = (value) => /^(1|true|yes)$/i.test(value ?? '');
-
 const mock = args.has('--mock') || truthy(process.env.LUNCHFLOW_MOCK);
 const host = process.env.HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -28,30 +24,30 @@ if (!Number.isFinite(ttlSeconds) || ttlSeconds < 0) {
   process.exit(1);
 }
 
-let client;
-if (mock) {
-  client = createMockClient();
+const runtime = createRuntime(process.env, { mock });
+
+if (runtime.mock) {
   console.log('Mock mode: serving sample data, no Lunch Flow API calls are made.');
-} else {
-  const apiKey = process.env.LUNCHFLOW_API_KEY;
-  if (!apiKey) {
-    console.error(
-      [
-        'LUNCHFLOW_API_KEY is not set.',
-        '',
-        '  1. In Lunch Flow, open Destinations and create an API destination to get an API key.',
-        '  2. Copy .env.example to .env and paste the key into LUNCHFLOW_API_KEY.',
-        '',
-        'Or run `npm run mock` to try the app with sample data.',
-      ].join('\n'),
-    );
-    process.exit(1);
-  }
-  client = createLunchFlowClient({ apiKey, baseUrl: process.env.LUNCHFLOW_BASE_URL || DEFAULT_BASE_URL });
+} else if (!runtime.client) {
+  console.error(
+    [
+      'LUNCHFLOW_API_KEY is not set.',
+      '',
+      '  1. In Lunch Flow, open Destinations and create an API destination to get an API key.',
+      '  2. Copy .env.example to .env and paste the key into LUNCHFLOW_API_KEY.',
+      '',
+      'Or run `npm run mock` to try the app with sample data.',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+if (runtime.auth.enabled) {
+  console.log(runtime.auth.configured ? 'Password protection is on.' : 'Password protection is required but MONETA_PASSWORD is not set; the API will refuse requests.');
 }
 
-const service = createBalanceService({ client, ttlMs: ttlSeconds * 1000 });
-const server = http.createServer(createRequestHandler({ service, publicDir: path.join(here, 'public') }));
+const server = http.createServer(
+  createRequestHandler({ service: runtime.service, auth: runtime.auth, publicDir: path.join(here, 'public') }),
+);
 
 server.listen(port, host, () => {
   const { port: boundPort } = server.address();

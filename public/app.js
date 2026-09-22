@@ -1,16 +1,20 @@
 const totalsEl = document.getElementById('totals');
 const accountsEl = document.getElementById('accounts');
 const noticeEl = document.getElementById('notice');
+const gateEl = document.getElementById('gate');
 const updatedEl = document.getElementById('updated');
 const refreshBtn = document.getElementById('refresh');
+const lockBtn = document.getElementById('lock');
 const cacheHintEl = document.getElementById('cache-hint');
 
 const AUTO_RELOAD_MS = 60_000;
+const PASSWORD_KEY = 'moneta.password';
 
 const state = {
   data: null,
   loading: false,
   error: null,
+  gate: null, // null | { kind: 'password' | 'unconfigured', message }
 };
 
 const STATUS = {
@@ -36,6 +40,24 @@ function el(tag, attrs = {}, ...children) {
   }
   return node;
 }
+
+// The password is kept in this browser only, as a convenience so the page opens straight to balances.
+function readPassword() {
+  try {
+    return localStorage.getItem(PASSWORD_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+function writePassword(password) {
+  try {
+    if (password) localStorage.setItem(PASSWORD_KEY, password);
+    else localStorage.removeItem(PASSWORD_KEY);
+  } catch {
+    /* storage unavailable: the password lives for this page load only */
+  }
+}
+let sessionPassword = '';
 
 const formatters = new Map();
 
@@ -221,6 +243,48 @@ function renderSkeletons() {
   );
 }
 
+function renderGate() {
+  const gate = state.gate;
+  if (gate.kind === 'unconfigured') {
+    gateEl.replaceChildren(
+      el('div', { class: 'gate' }, el('h2', { text: 'Password not set' }), el('p', { text: gate.message })),
+    );
+  } else {
+    const input = el('input', {
+      id: 'password',
+      type: 'password',
+      autocomplete: 'current-password',
+      placeholder: 'Password',
+      required: true,
+    });
+    const form = el(
+      'form',
+      {
+        class: 'gate',
+        onsubmit: (event) => {
+          event.preventDefault();
+          const value = input.value.trim();
+          if (!value) return;
+          sessionPassword = value;
+          writePassword(value);
+          state.gate = null;
+          load();
+        },
+      },
+      el('h2', { text: 'Enter the password' }),
+      el('p', { text: 'This page shows bank balances, so it is locked with the password set for this deployment.' }),
+      // Hidden username lets password managers file the entry under this site.
+      el('input', { type: 'text', name: 'username', autocomplete: 'username', value: 'moneta', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' }),
+      el('label', { for: 'password', class: 'sr-only', text: 'Password' }),
+      el('div', { class: 'gate-row' }, input, el('button', { class: 'btn', type: 'submit', text: 'Unlock' })),
+      gate.message ? el('p', { class: 'gate-error', role: 'alert', text: gate.message }) : null,
+    );
+    gateEl.replaceChildren(form);
+    input.focus();
+  }
+  gateEl.hidden = false;
+}
+
 function renderNotice() {
   const { data, error, loading } = state;
   let kind = null;
@@ -245,7 +309,7 @@ function renderNotice() {
     detail = 'Lunch Flow could not return a balance for every account. Affected accounts are marked below.';
   }
 
-  if (!kind || loading) {
+  if (!kind || loading || state.gate) {
     noticeEl.hidden = true;
     noticeEl.replaceChildren();
     noticeEl.className = 'notice';
@@ -261,6 +325,10 @@ function renderNotice() {
 
 function renderUpdated() {
   const { data, loading } = state;
+  if (state.gate) {
+    updatedEl.textContent = '';
+    return;
+  }
   if (loading && !data) {
     updatedEl.textContent = 'Loading…';
     return;
@@ -269,8 +337,7 @@ function renderUpdated() {
     updatedEl.textContent = '';
     return;
   }
-  const when = relativeTime(data.fetchedAt);
-  updatedEl.textContent = `Updated ${when}`;
+  updatedEl.textContent = `Updated ${relativeTime(data.fetchedAt)}`;
   updatedEl.title = new Date(data.fetchedAt).toLocaleString();
 }
 
@@ -312,10 +379,24 @@ function renderData() {
 }
 
 function render() {
+  const gated = Boolean(state.gate);
+  refreshBtn.hidden = gated;
   refreshBtn.disabled = state.loading;
   refreshBtn.textContent = state.loading ? 'Refreshing…' : 'Refresh';
+  lockBtn.hidden = gated || !(sessionPassword || readPassword());
   renderUpdated();
   renderNotice();
+
+  if (gated) {
+    renderGate();
+    totalsEl.replaceChildren();
+    accountsEl.replaceChildren();
+    cacheHintEl.textContent = '';
+    return;
+  }
+  gateEl.hidden = true;
+  gateEl.replaceChildren();
+
   if (state.data) renderData();
   else if (state.loading) renderSkeletons();
   else {
@@ -332,11 +413,30 @@ async function load({ refresh = false } = {}) {
   state.error = null;
   render();
   try {
-    const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers: { accept: 'application/json' } });
+    const headers = { accept: 'application/json' };
+    const password = sessionPassword || readPassword();
+    if (password) headers.authorization = `Bearer ${password}`;
+
+    const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers });
     const body = await res.json().catch(() => null);
+
+    if (res.status === 401) {
+      // Wrong or missing password: forget it and ask.
+      sessionPassword = '';
+      writePassword('');
+      state.data = null;
+      state.gate = { kind: 'password', message: password ? 'Wrong password. Try again.' : '' };
+      return;
+    }
+    if (res.status === 503 && body && body.error === 'Password not configured') {
+      state.data = null;
+      state.gate = { kind: 'unconfigured', message: body.message };
+      return;
+    }
     if (!res.ok) {
       throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
     }
+    state.gate = null;
     state.data = body;
   } catch (err) {
     state.error = err && err.message ? err.message : 'Unknown error';
@@ -347,14 +447,22 @@ async function load({ refresh = false } = {}) {
 }
 
 refreshBtn.addEventListener('click', () => load({ refresh: true }));
+lockBtn.addEventListener('click', () => {
+  sessionPassword = '';
+  writePassword('');
+  state.data = null;
+  state.error = null;
+  state.gate = { kind: 'password', message: '' };
+  render();
+});
 
 setInterval(renderUpdated, 30_000);
 setInterval(() => {
-  if (document.visibilityState === 'visible') load();
+  if (document.visibilityState === 'visible' && !state.gate) load();
 }, AUTO_RELOAD_MS);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || !state.data) return;
+  if (document.visibilityState !== 'visible' || !state.data || state.gate) return;
   if (Date.now() - new Date(state.data.fetchedAt).getTime() > AUTO_RELOAD_MS) load();
 });
 

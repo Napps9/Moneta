@@ -449,6 +449,87 @@ a {
   }
 }
 
+/* Password gate */
+
+.gate {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 1px var(--ring);
+  padding: 20px 22px;
+  max-width: 480px;
+}
+
+.gate h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.gate p {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+}
+
+.gate-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gate input {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--page);
+  color: var(--ink);
+}
+
+.gate input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.gate-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: var(--ink-2);
+}
+
+.gate-error::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--critical);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.link-btn {
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .footer {
   display: flex;
   flex-wrap: wrap;

@@ -22,18 +22,19 @@ const SECURITY_HEADERS = {
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
-function send(res, status, body, type) {
+function send(req, res, status, body, type) {
   res.statusCode = status;
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
   res.setHeader('Content-Type', type);
   const payload = Buffer.from(body);
   res.setHeader('Content-Length', payload.length);
-  if (res.req && res.req.method === 'HEAD') return res.end();
+  if (req.method === 'HEAD') return res.end();
   return res.end(payload);
 }
 
-const sendJson = (res, status, body) => send(res, status, JSON.stringify(body), MIME['.json']);
-const sendText = (res, status, body) => send(res, status, body, MIME['.txt']);
+const sendJson = (req, res, status, body) => send(req, res, status, JSON.stringify(body), MIME['.json']);
+const sendText = (req, res, status, body) => send(req, res, status, body, MIME['.txt']);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function describeUpstreamError(err) {
   if (err instanceof LunchFlowError) {
@@ -42,7 +43,7 @@ function describeUpstreamError(err) {
         status: 502,
         body: {
           error: 'Lunch Flow rejected the API key',
-          message: `${err.message}. Check LUNCHFLOW_API_KEY in your .env file.`,
+          message: `${err.message}. Check LUNCHFLOW_API_KEY in your environment.`,
           upstreamStatus: err.status,
         },
       };
@@ -55,53 +56,88 @@ function describeUpstreamError(err) {
   return { status: 500, body: { error: 'Internal error', message: err && err.message ? err.message : String(err) } };
 }
 
-export function createRequestHandler({ service, publicDir, logger = console }) {
-  if (!service) throw new Error('A balance service is required');
-  if (!publicDir) throw new Error('A public directory is required');
-  const root = path.resolve(publicDir);
-
-  async function handleBalances(req, res, url) {
+/**
+ * Handler for `GET /api/balances`. Works both inside the Node server and as a
+ * serverless function, since it only relies on the standard request/response API.
+ */
+export function createBalancesHandler({ service = null, auth = null, logger = console } = {}) {
+  return async function handleBalances(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Allow', 'GET, HEAD');
-      return sendJson(res, 405, { error: 'Method not allowed' });
+      return sendJson(req, res, 405, { error: 'Method not allowed' });
+    }
+    if (auth) {
+      const denied = auth.check(req);
+      if (denied) {
+        if (denied.status === 401 && denied.attempted) await sleep(300); // slow down guessing
+        return sendJson(req, res, denied.status, denied.body);
+      }
+    }
+    if (!service) {
+      return sendJson(req, res, 503, {
+        error: 'Lunch Flow API key not configured',
+        message: 'Set LUNCHFLOW_API_KEY in the environment variables (or LUNCHFLOW_MOCK=1 for sample data) and redeploy.',
+      });
+    }
+
+    let url;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      return sendJson(req, res, 400, { error: 'Bad request' });
     }
     const refresh = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? '');
     try {
       const data = await service.getSnapshot({ refresh });
-      res.setHeader('Cache-Control', 'no-store');
-      return sendJson(res, 200, data);
+      return sendJson(req, res, 200, data);
     } catch (err) {
       logger.error?.(`Balance snapshot failed: ${err && err.message ? err.message : err}`);
       const { status, body } = describeUpstreamError(err);
-      res.setHeader('Cache-Control', 'no-store');
-      return sendJson(res, status, body);
+      return sendJson(req, res, status, body);
     }
-  }
+  };
+}
+
+/** Handler for `GET /api/health`. Tells the page whether a password is needed. */
+export function createHealthHandler({ auth = null } = {}) {
+  return function handleHealth(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    return sendJson(req, res, 200, { ok: true, passwordRequired: Boolean(auth && auth.enabled) });
+  };
+}
+
+/** Full handler for the self-hosted server: the API plus the static page. */
+export function createRequestHandler({ service = null, auth = null, publicDir, logger = console }) {
+  if (!publicDir) throw new Error('A public directory is required');
+  const root = path.resolve(publicDir);
+  const balances = createBalancesHandler({ service, auth, logger });
+  const health = createHealthHandler({ auth });
 
   async function serveStatic(req, res, pathname) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.setHeader('Allow', 'GET, HEAD');
-      return sendText(res, 405, 'Method not allowed');
+      return sendText(req, res, 405, 'Method not allowed');
     }
     let decoded;
     try {
       decoded = decodeURIComponent(pathname);
     } catch {
-      return sendText(res, 400, 'Bad request');
+      return sendText(req, res, 400, 'Bad request');
     }
-    if (decoded.includes('\0')) return sendText(res, 400, 'Bad request');
+    if (decoded.includes('\0')) return sendText(req, res, 400, 'Bad request');
 
     const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
     const filePath = path.resolve(root, relative);
-    if (filePath !== root && !filePath.startsWith(root + path.sep)) return sendText(res, 404, 'Not found');
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) return sendText(req, res, 404, 'Not found');
 
     let info;
     try {
       info = await stat(filePath);
     } catch {
-      return sendText(res, 404, 'Not found');
+      return sendText(req, res, 404, 'Not found');
     }
-    if (!info.isFile()) return sendText(res, 404, 'Not found');
+    if (!info.isFile()) return sendText(req, res, 404, 'Not found');
 
     res.statusCode = 200;
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
@@ -127,17 +163,17 @@ export function createRequestHandler({ service, publicDir, logger = console }) {
     try {
       url = new URL(req.url ?? '/', 'http://localhost');
     } catch {
-      return sendText(res, 400, 'Bad request');
+      return sendText(req, res, 400, 'Bad request');
     }
 
     try {
-      if (url.pathname === '/api/balances') return await handleBalances(req, res, url);
-      if (url.pathname === '/api/health') return sendJson(res, 200, { ok: true });
-      if (url.pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'Not found' });
+      if (url.pathname === '/api/balances') return await balances(req, res);
+      if (url.pathname === '/api/health') return health(req, res);
+      if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'Not found' });
       return await serveStatic(req, res, url.pathname);
     } catch (err) {
       logger.error?.(err);
-      if (!res.headersSent) return sendJson(res, 500, { error: 'Internal error', message: 'Unexpected server error' });
+      if (!res.headersSent) return sendJson(req, res, 500, { error: 'Internal error', message: 'Unexpected server error' });
       res.destroy();
     }
   };
