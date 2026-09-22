@@ -1,0 +1,712 @@
+<title>Moneta</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f6f6f3;
+    --surface: #fcfcfb;
+    --surface-2: #efeee9;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-3: #898781;
+    --line: #e1e0d9;
+    --ring: rgba(11, 11, 11, 0.1);
+    --accent: #2a78d6;
+    --accent-ink: #ffffff;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --radius: 12px;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #242423;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-3: #898781;
+      --line: #2c2c2a;
+      --ring: rgba(255, 255, 255, 0.1);
+      --accent: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #242423;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #898781;
+    --line: #2c2c2a;
+    --ring: rgba(255, 255, 255, 0.1);
+    --accent: #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.45;
+    min-height: 100%;
+  }
+  a { color: var(--accent); }
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding-inline: 16px;
+    padding-block: 20px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand-mark {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
+    box-shadow: inset 0 0 0 5px var(--accent), inset 0 0 0 7px var(--accent-ink);
+  }
+  .topbar-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .updated { color: var(--ink-3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .btn {
+    font: inherit; font-weight: 600; font-size: 14px;
+    color: var(--accent-ink); background: var(--accent);
+    border: 0; border-radius: 999px; padding: 8px 16px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn:disabled { opacity: 0.6; cursor: progress; }
+  .btn--ghost { background: var(--surface-2); color: var(--ink); }
+
+  .notice {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; border-radius: var(--radius);
+    background: var(--surface); box-shadow: 0 0 0 1px var(--ring);
+    color: var(--ink-2); font-size: 14px;
+  }
+  .notice-icon { flex: none; width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--ink-3); }
+  .notice--warning .notice-icon { background: var(--warning); }
+  .notice--critical .notice-icon { background: var(--critical); }
+  .notice strong { color: var(--ink); font-weight: 600; }
+
+  .panel {
+    background: var(--surface); border-radius: var(--radius); box-shadow: 0 0 0 1px var(--ring);
+    padding: 20px 22px; max-width: 640px;
+  }
+  .panel h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; text-wrap: balance; }
+  .panel p { margin: 0 0 12px; color: var(--ink-2); }
+  .panel ol { margin: 0 0 16px; padding-left: 22px; color: var(--ink-2); display: grid; gap: 8px; }
+  .panel li strong { color: var(--ink); font-weight: 600; }
+  .panel code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+
+  .totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border-radius: var(--radius); box-shadow: 0 0 0 1px var(--ring); padding: 16px 18px; min-width: 0; }
+  .tile-label { color: var(--ink-2); font-size: 13px; margin-bottom: 4px; }
+  .tile-value { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; white-space: nowrap; }
+  .tile--hero .tile-value { font-size: 48px; }
+  .tile-meta { color: var(--ink-3); font-size: 13px; margin-top: 6px; }
+  .tile--empty { grid-column: 1 / -1; color: var(--ink-2); }
+  .tile--empty .tile-value { font-size: 18px; font-weight: 500; white-space: normal; }
+
+  .accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+  .institution { background: var(--surface); border-radius: var(--radius); box-shadow: 0 0 0 1px var(--ring); overflow: hidden; }
+  .institution-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .institution-head h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .institution-count { color: var(--ink-3); font-size: 13px; white-space: nowrap; }
+  .logo, .logo-fallback { flex: none; width: 28px; height: 28px; border-radius: 8px; }
+  .logo { object-fit: contain; background: #ffffff; box-shadow: 0 0 0 1px var(--ring); }
+  .logo-fallback { display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); font-size: 13px; font-weight: 600; text-transform: uppercase; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row--inactive .row-name, .row--inactive .row-amount { color: var(--ink-2); }
+  .row-main { min-width: 0; flex: 1; }
+  .row-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--ink-3); font-size: 13px; margin-top: 2px; }
+  .row-meta:empty { display: none; }
+  .row-error { color: var(--ink-2); }
+  .row-amount { flex: none; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; text-align: right; }
+  .row-amount--missing { color: var(--ink-3); font-weight: 500; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--ink-2); font-size: 12px; font-weight: 500;
+    padding: 1px 8px 1px 6px; border-radius: 999px; background: var(--surface-2);
+  }
+  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+  .badge--good::before { background: var(--good); }
+  .badge--warning::before { background: var(--warning); }
+  .badge--critical::before { background: var(--critical); }
+
+  .skeleton { position: relative; overflow: hidden; color: transparent !important; background: var(--surface-2) !important; border-radius: 6px; min-height: 1em; box-shadow: none !important; }
+  .skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, var(--ring), transparent); animation: shimmer 1.4s infinite; }
+  @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } }
+
+  .footer { display: flex; flex-wrap: wrap; gap: 4px 16px; padding-top: 12px; color: var(--ink-3); font-size: 12px; border-top: 1px solid var(--line); }
+
+  @media (max-width: 480px) {
+    .topbar-actions { width: 100%; justify-content: space-between; }
+    .tile--hero .tile-value { font-size: 40px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>Moneta</h1>
+    </div>
+    <div class="topbar-actions">
+      <span id="updated" class="updated" aria-live="polite"></span>
+      <button id="refresh" class="btn" type="button" hidden>Refresh</button>
+    </div>
+  </header>
+
+  <section id="notice" class="notice" role="status" hidden></section>
+  <section id="setup" hidden></section>
+  <section id="totals" class="totals" aria-label="Totals per currency"></section>
+  <section id="accounts" class="accounts" aria-label="Accounts"></section>
+
+  <footer class="footer">
+    <span>Balances come from your Lunch Flow connector, read with your own login.</span>
+    <span>Refreshes every 5 minutes while open.</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const SERVER = 'Lunch Flow';
+  const LIST_TOOL = 'lunchflow_list_accounts';
+  const BALANCE_TOOL = 'lunchflow_get_account_balance';
+  const STALE_MS = 5 * 60 * 1000;
+  const POLL_MS = 5 * 60 * 1000;
+  const MAX_WATCHES = 60; // per-view limit is 64; one is used by the account list
+
+  // Errors after which the shell will not succeed on its own; rendered data is retracted.
+  const DENIAL_CODES = new Set([
+    'needs_reauth', 'server_not_connected', 'selection_required', 'server_not_found',
+    'not_in_manifest', 'blocked_by_policy', 'approval_required', 'not_granted',
+    'capability_disabled', 'capability_removed', 'consent_required',
+  ]);
+
+  const STATUS = {
+    ACTIVE: { label: 'Active', kind: 'good' },
+    DISCONNECTED: { label: 'Disconnected', kind: 'warning' },
+    ERROR: { label: 'Error', kind: 'critical' },
+  };
+
+  const els = {
+    updated: document.getElementById('updated'),
+    refresh: document.getElementById('refresh'),
+    notice: document.getElementById('notice'),
+    setup: document.getElementById('setup'),
+    totals: document.getElementById('totals'),
+    accounts: document.getElementById('accounts'),
+  };
+
+  const state = {
+    phase: 'booting', // booting | no-runtime | setup | live | stopped
+    mcp: null,
+    accounts: [],
+    balances: {},        // id -> { current, available, currency, storedAt }
+    balanceErrors: {},   // id -> McpError
+    balanceUnsubs: {},   // id -> unsubscribe
+    accountsUnsub: null,
+    storedAt: null,
+    pageError: null,     // denial or list-level error
+    transientError: null,
+    refreshing: false,
+    refreshTimer: null,
+  };
+
+  // ---------- helpers ----------
+
+  function el(tag, attrs = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value == null || value === false) continue;
+      if (key === 'class') node.className = value;
+      else if (key === 'text') node.textContent = value;
+      else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
+      else node.setAttribute(key, value === true ? '' : String(value));
+    }
+    for (const child of children.flat()) {
+      if (child == null || child === false) continue;
+      node.append(child instanceof Node ? child : String(child));
+    }
+    return node;
+  }
+
+  const formatters = new Map();
+  function moneyFormatter(currency) {
+    const key = currency || '';
+    if (formatters.has(key)) return formatters.get(key);
+    let formatter;
+    try {
+      formatter = new Intl.NumberFormat(undefined, { style: 'currency', currency, currencyDisplay: 'narrowSymbol' });
+    } catch {
+      const plain = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      formatter = { format: (v) => (currency ? `${plain.format(v)} ${currency}` : plain.format(v)) };
+    }
+    formatters.set(key, formatter);
+    return formatter;
+  }
+  function formatMoney(amount, currency) {
+    if (amount == null || Number.isNaN(amount)) return '—';
+    return moneyFormatter(currency).format(amount);
+  }
+  function relativeTime(ms) {
+    if (!ms) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (seconds < 45) return 'just now';
+    if (seconds < 90) return 'a minute ago';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 45) return `${minutes} min ago`;
+    if (minutes < 90) return 'an hour ago';
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours} hours ago`;
+    return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  function num(v) {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'string' && v.trim() !== '') { const n = Number(v); return Number.isFinite(n) ? n : null; }
+    return null;
+  }
+
+  // ---------- payload parsing (tolerant: the connector may answer with an object, an array or JSON text) ----------
+
+  function toObject(payload) {
+    if (typeof payload === 'string') { try { return JSON.parse(payload); } catch { return null; } }
+    return payload;
+  }
+  function normalizeAccount(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = raw.id ?? raw.account_id ?? raw.accountId;
+    if (typeof id !== 'number' && typeof id !== 'string') return null;
+    return {
+      id,
+      name: str(raw.name) || `Account ${id}`,
+      institutionName: str(raw.institution_name) || str(raw.institutionName) || str(raw.institution) || 'Unknown institution',
+      institutionLogo: str(raw.institution_logo) || str(raw.institutionLogo) || null,
+      currency: (str(raw.currency) || '').toUpperCase() || null,
+      status: (str(raw.status) || '').toUpperCase() || 'UNKNOWN',
+    };
+  }
+  function parseAccounts(payload) {
+    const p = toObject(payload);
+    let list = null;
+    if (Array.isArray(p)) list = p;
+    else if (p && Array.isArray(p.accounts)) list = p.accounts;
+    else if (p && p.data && Array.isArray(p.data.accounts)) list = p.data.accounts;
+    if (!list) throw new Error('The account list came back in a shape this page does not understand.');
+    return list.map(normalizeAccount).filter(Boolean);
+  }
+  function parseBalance(payload, fallbackCurrency) {
+    const p = toObject(payload);
+    const raw = p && typeof p === 'object' && p.balance && typeof p.balance === 'object' ? p.balance : p;
+    if (!raw || typeof raw !== 'object') throw new Error('The balance came back in a shape this page does not understand.');
+    const available = num(raw.available);
+    const current = num(raw.current) ?? num(raw.amount) ?? num(raw.balance) ?? available;
+    if (current === null) throw new Error('The balance did not include an amount.');
+    return { current, available, currency: (str(raw.currency) || '').toUpperCase() || fallbackCurrency || null };
+  }
+
+  // ---------- totals ----------
+
+  function computeTotals() {
+    const byCurrency = new Map();
+    const entry = (c) => {
+      if (!byCurrency.has(c)) byCurrency.set(c, { currency: c, current: 0, available: 0, availableComplete: true, accountCount: 0, excludedCount: 0 });
+      return byCurrency.get(c);
+    };
+    for (const a of state.accounts) {
+      const b = state.balances[String(a.id)];
+      if (!b) continue;
+      const t = entry(b.currency || null);
+      t.current += b.current; t.accountCount += 1;
+      if (b.available == null) t.availableComplete = false; else t.available += b.available;
+    }
+    for (const a of state.accounts) {
+      if (state.balances[String(a.id)] || !a.currency) continue;
+      const t = byCurrency.get(a.currency);
+      if (t) t.excludedCount += 1;
+    }
+    return [...byCurrency.values()]
+      .map((t) => ({ currency: t.currency, current: t.current, available: t.availableComplete && t.accountCount > 0 ? t.available : null, accountCount: t.accountCount, excludedCount: t.excludedCount }))
+      .sort((a, b) => Math.abs(b.current) - Math.abs(a.current) || String(a.currency).localeCompare(String(b.currency)));
+  }
+
+  // ---------- rendering ----------
+
+  function renderLogo(group) {
+    const fallback = el('div', { class: 'logo-fallback', 'aria-hidden': 'true', text: group.name.trim().charAt(0) || '?' });
+    if (!group.logo || !/^https?:\/\//i.test(group.logo)) return fallback;
+    const img = el('img', { class: 'logo', src: group.logo, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+    img.addEventListener('error', () => img.replaceWith(fallback));
+    return img;
+  }
+  function renderBadge(status) {
+    const info = STATUS[status] || { label: status ? status.toLowerCase() : 'Unknown', kind: 'neutral' };
+    return el('span', { class: `badge badge--${info.kind}`, text: info.label });
+  }
+  // Connector error text often wraps a JSON body; surface its message, not the envelope.
+  function cleanMessage(message) {
+    const text = str(message);
+    const start = text.indexOf('{');
+    if (start !== -1) {
+      try {
+        const body = JSON.parse(text.slice(start));
+        if (body && typeof body.message === 'string') return body.message;
+        if (body && typeof body.error === 'string') return body.error;
+      } catch {}
+    }
+    return text.replace(/^Error:\s*/i, '') || 'unknown error';
+  }
+  function describeBalanceError(error) {
+    switch (error.code) {
+      case 'tool_error': return `Lunch Flow reported: ${cleanMessage(error.message)}`;
+      case 'server_unavailable': return 'Lunch Flow did not answer for this account.';
+      case 'parse_error': return error.message;
+      default: return `Balance unavailable (${error.code}).`;
+    }
+  }
+  function renderAccountRow(account) {
+    const id = String(account.id);
+    const balance = state.balances[id];
+    const error = state.balanceErrors[id];
+    const pending = !balance && !error;
+    const inactive = account.status !== 'ACTIVE';
+    const meta = [];
+    if (inactive) meta.push(renderBadge(account.status));
+    if (balance && balance.available != null && balance.available !== balance.current) {
+      meta.push(el('span', { text: `Available ${formatMoney(balance.available, balance.currency)}` }));
+    }
+    if (error && !balance) meta.push(el('span', { class: 'row-error', text: describeBalanceError(error) }));
+
+    let amount;
+    if (balance) amount = el('div', { class: 'row-amount', text: formatMoney(balance.current, balance.currency) });
+    else if (pending) amount = el('div', { class: 'row-amount skeleton', text: '0,000.00' });
+    else amount = el('div', { class: 'row-amount row-amount--missing', text: '—' });
+
+    return el('li', { class: `row${inactive ? ' row--inactive' : ''}` },
+      el('div', { class: 'row-main' }, el('div', { class: 'row-name', text: account.name }), el('div', { class: 'row-meta' }, meta)),
+      amount);
+  }
+  function groupByInstitution() {
+    const groups = new Map();
+    const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+    const sorted = [...state.accounts].sort((a, b) => collator.compare(a.institutionName, b.institutionName) || collator.compare(a.name, b.name));
+    for (const a of sorted) {
+      if (!groups.has(a.institutionName)) groups.set(a.institutionName, { name: a.institutionName, logo: a.institutionLogo, accounts: [] });
+      const g = groups.get(a.institutionName);
+      if (!g.logo && a.institutionLogo) g.logo = a.institutionLogo;
+      g.accounts.push(a);
+    }
+    return [...groups.values()];
+  }
+  function renderInstitution(group) {
+    return el('section', { class: 'institution', 'aria-label': group.name },
+      el('div', { class: 'institution-head' }, renderLogo(group), el('h2', { text: group.name }), el('span', { class: 'institution-count', text: plural(group.accounts.length, 'account') })),
+      el('ul', { class: 'rows' }, group.accounts.map(renderAccountRow)));
+  }
+  function renderTile(total, hero) {
+    const label = total.currency ? `Total in ${total.currency}` : 'Total (unknown currency)';
+    const meta = [plural(total.accountCount, 'account')];
+    if (total.available != null && total.available !== total.current) meta.push(`${formatMoney(total.available, total.currency)} available`);
+    if (total.excludedCount > 0) meta.push(`${plural(total.excludedCount, 'account')} not counted`);
+    return el('div', { class: `tile${hero ? ' tile--hero' : ''}` },
+      el('div', { class: 'tile-label', text: label }),
+      el('div', { class: 'tile-value', text: formatMoney(total.current, total.currency) }),
+      el('div', { class: 'tile-meta', text: meta.join(' · ') }));
+  }
+  function fitTileValues() {
+    for (const node of els.totals.querySelectorAll('.tile-value:not(.skeleton)')) {
+      node.style.fontSize = '';
+      let size = Number.parseFloat(getComputedStyle(node).fontSize);
+      while (size > 18 && node.scrollWidth > node.clientWidth) { size -= 2; node.style.fontSize = `${size}px`; }
+    }
+  }
+  function renderSkeletons() {
+    els.totals.replaceChildren(...[0, 1].map(() => el('div', { class: 'tile', 'aria-hidden': 'true' },
+      el('div', { class: 'tile-label skeleton', text: 'Total' }),
+      el('div', { class: 'tile-value skeleton', text: '0,000.00' }),
+      el('div', { class: 'tile-meta skeleton', text: 'accounts' }))));
+    els.accounts.replaceChildren(...[0, 1].map(() => el('section', { class: 'institution', 'aria-hidden': 'true' },
+      el('div', { class: 'institution-head' }, el('div', { class: 'logo-fallback skeleton' }), el('h2', { class: 'skeleton', text: 'Institution' })),
+      el('ul', { class: 'rows' }, [0, 1].map(() => el('li', { class: 'row' },
+        el('div', { class: 'row-main' }, el('div', { class: 'row-name skeleton', text: 'Account name' })),
+        el('div', { class: 'row-amount skeleton', text: '0,000.00' })))))));
+  }
+
+  function setupSteps() {
+    return el('ol', {},
+      el('li', {}, el('strong', { text: 'In Lunch Flow' }), ', open Destinations and add an ', el('strong', { text: 'MCP' }), ' destination. Copy the server URL it shows.'),
+      el('li', {}, el('strong', { text: 'In Claude' }), ', open Settings, then Connectors, and add a custom connector. Name it exactly ', el('code', { text: SERVER }), ', paste the URL, and sign in when asked.'),
+      el('li', {}, 'Come back to this page and tap ', el('strong', { text: 'Check again' }), '. Allow the page to use Lunch Flow when Claude asks.'));
+  }
+  function renderSetup(kind, error) {
+    const panel = el('div', { class: 'panel' });
+    const checkAgain = el('button', { class: 'btn', type: 'button', id: 'check-again', onclick: () => boot(true) }, 'Check again');
+    if (kind === 'no-runtime') {
+      panel.append(
+        el('h2', { text: 'Open this page from Claude' }),
+        el('p', { text: 'Moneta reads your balances through the Lunch Flow connector on your Claude account, so it only works inside claude.ai or the Claude app.' }),
+        el('p', { text: 'If you are already in Claude, connectors may be turned off for this view.' }),
+        checkAgain);
+    } else if (kind === 'not-connected') {
+      panel.append(
+        el('h2', { text: 'Connect Lunch Flow to Claude' }),
+        el('p', { text: 'One-time setup. No API keys: you sign in to Lunch Flow, and the page reads balances with your own login.' }),
+        setupSteps(),
+        checkAgain);
+    } else if (kind === 'needs_reauth') {
+      panel.append(
+        el('h2', { text: 'Reconnect Lunch Flow' }),
+        el('p', { text: 'Your Lunch Flow login in Claude has expired. Open Settings, then Connectors, reconnect Lunch Flow, and come back.' }),
+        checkAgain);
+    } else if (kind === 'selection_required') {
+      panel.append(
+        el('h2', { text: 'Choose a Lunch Flow connector' }),
+        el('p', { text: 'You have more than one connector named Lunch Flow. Pick one when Claude asks, then check again.' }),
+        checkAgain);
+    } else if (kind === 'not_in_manifest' || kind === 'consent_required') {
+      panel.append(
+        el('h2', { text: 'Allow this page to use Lunch Flow' }),
+        el('p', { text: 'Moneta needs your permission to read accounts and balances from the Lunch Flow connector. Allow it when Claude asks, or turn it on in this page’s connector settings, then check again.' }),
+        checkAgain);
+    } else if (kind === 'blocked_by_policy' || kind === 'approval_required') {
+      panel.append(
+        el('h2', { text: 'Not allowed here' }),
+        el('p', { text: 'Your organization’s policy does not let this page use the Lunch Flow connector.' }));
+    } else {
+      panel.append(
+        el('h2', { text: 'Could not reach Lunch Flow' }),
+        el('p', { text: error && error.message ? `${error.message} (${error.code || 'unknown'})` : 'Something went wrong while talking to the connector.' }),
+        checkAgain);
+    }
+    els.setup.replaceChildren(panel);
+    els.setup.hidden = false;
+  }
+
+  function renderNotice() {
+    const err = state.transientError;
+    let kind = null; let title = ''; let detail = '';
+    if (err) {
+      kind = 'warning';
+      if (err.code === 'server_unavailable') { title = 'Lunch Flow is not responding right now.'; }
+      else if (err.code === 'rate_limited') { title = 'Too many requests.'; detail = 'Try again in a moment.'; }
+      else if (err.code === 'tool_error') { title = 'Lunch Flow reported an error.'; detail = cleanMessage(err.message); }
+      else if (err.code === 'parse_error') { title = 'Could not read the reply from Lunch Flow.'; detail = err.message || ''; }
+      else { title = 'Could not refresh.'; detail = `${err.message || ''} (${err.code || 'unknown'})`.trim(); }
+      if (state.storedAt) detail = `${detail} Showing balances from ${relativeTime(state.storedAt)}.`.trim();
+    } else if (state.phase === 'live' && state.accounts.some((a) => state.balanceErrors[String(a.id)] && !state.balances[String(a.id)])) {
+      kind = 'warning'; title = 'Some balances are missing.'; detail = 'Affected accounts are marked below and left out of the totals.';
+    }
+    if (!kind) { els.notice.hidden = true; els.notice.replaceChildren(); els.notice.className = 'notice'; return; }
+    els.notice.className = `notice notice--${kind}`;
+    els.notice.replaceChildren(el('span', { class: 'notice-icon', 'aria-hidden': 'true' }), el('div', {}, el('strong', { text: title }), ' ', detail));
+    els.notice.hidden = false;
+  }
+  function renderUpdated() {
+    if (state.phase === 'booting') { els.updated.textContent = 'Loading…'; return; }
+    if (state.phase !== 'live' || !state.storedAt) { els.updated.textContent = ''; return; }
+    els.updated.textContent = `Updated ${relativeTime(state.storedAt)}`;
+    els.updated.title = new Date(state.storedAt).toLocaleString();
+  }
+  function renderLive() {
+    const totals = computeTotals();
+    const anyPending = state.accounts.some((a) => !state.balances[String(a.id)] && !state.balanceErrors[String(a.id)]);
+    if (state.accounts.length === 0) {
+      els.totals.replaceChildren(el('div', { class: 'tile tile--empty' },
+        el('div', { class: 'tile-value', text: 'No accounts connected yet.' }),
+        el('div', { class: 'tile-meta', text: 'Connect a bank in Lunch Flow, then refresh.' })));
+    } else if (totals.length === 0 && anyPending) {
+      els.totals.replaceChildren(...[0].map(() => el('div', { class: 'tile', 'aria-hidden': 'true' },
+        el('div', { class: 'tile-label skeleton', text: 'Total' }),
+        el('div', { class: 'tile-value skeleton', text: '0,000.00' }),
+        el('div', { class: 'tile-meta skeleton', text: 'accounts' }))));
+    } else if (totals.length === 0) {
+      els.totals.replaceChildren(el('div', { class: 'tile tile--empty' },
+        el('div', { class: 'tile-value', text: 'No balances available.' }),
+        el('div', { class: 'tile-meta', text: 'Lunch Flow returned accounts but no balances. Try refreshing in a moment.' })));
+    } else {
+      const hero = totals.length === 1;
+      els.totals.replaceChildren(...totals.map((t) => renderTile(t, hero)));
+    }
+    fitTileValues();
+    els.accounts.replaceChildren(...groupByInstitution().map(renderInstitution));
+  }
+  function render() {
+    if (state.phase === 'stopped') { document.querySelector('.wrap').replaceChildren(); return; }
+    els.refresh.hidden = state.phase !== 'live';
+    els.refresh.disabled = state.refreshing;
+    els.refresh.textContent = state.refreshing ? 'Refreshing…' : 'Refresh';
+    renderUpdated();
+    renderNotice();
+    if (state.phase === 'live') {
+      els.setup.hidden = true;
+      renderLive();
+    } else if (state.phase === 'booting') {
+      els.setup.hidden = true;
+      renderSkeletons();
+    } else {
+      els.totals.replaceChildren();
+      els.accounts.replaceChildren();
+    }
+  }
+
+  // ---------- connector plumbing ----------
+
+  function stopWatching() {
+    if (state.accountsUnsub) { try { state.accountsUnsub(); } catch {} state.accountsUnsub = null; }
+    for (const unsub of Object.values(state.balanceUnsubs)) { try { unsub(); } catch {} }
+    state.balanceUnsubs = {};
+  }
+  function retract() {
+    state.accounts = []; state.balances = {}; state.balanceErrors = {}; state.storedAt = null;
+    stopWatching();
+  }
+  function handleDenial(error) {
+    retract();
+    state.refreshing = false;
+    state.transientError = null;
+    state.pageError = error;
+    state.phase = 'setup';
+    render();
+    const kind = error.code === 'server_not_connected' || error.code === 'server_not_found' ? 'not-connected'
+      : error.code === 'not_granted' || error.code === 'capability_disabled' || error.code === 'capability_removed' ? 'no-runtime'
+      : error.code;
+    renderSetup(kind, error);
+  }
+
+  function onAccountsEvent(ev) {
+    if (state.phase === 'stopped') return;
+    if (ev.type === 'error') {
+      const error = ev.error || { code: 'upstream_error', message: '' };
+      if (error.code === 'user_changed') { state.phase = 'stopped'; stopWatching(); render(); return; }
+      if (DENIAL_CODES.has(error.code)) return handleDenial(error);
+      // Transient: keep what we have. Without any data yet, show the failure as a setup-style panel.
+      state.refreshing = false;
+      if (state.accounts.length === 0 && !state.storedAt) {
+        state.phase = 'setup'; render(); renderSetup('unreachable', error); return;
+      }
+      state.transientError = error; render(); return;
+    }
+    const result = ev.result || {};
+    let accounts;
+    try { accounts = parseAccounts(result.payload); }
+    catch (e) {
+      const error = { code: 'parse_error', message: e.message };
+      state.refreshing = false;
+      if (state.accounts.length === 0 && !state.storedAt) { state.phase = 'setup'; render(); renderSetup('unreachable', error); return; }
+      state.transientError = error; render(); return;
+    }
+    state.phase = 'live';
+    state.pageError = null;
+    state.transientError = null;
+    state.refreshing = false;
+    state.accounts = accounts;
+    state.storedAt = (result.cache && result.cache.storedAt) || Date.now();
+    reconcileBalanceWatches();
+    render();
+  }
+
+  function onBalanceEvent(id, account, ev) {
+    if (state.phase !== 'live') return;
+    if (ev.type === 'error') {
+      const error = ev.error || { code: 'upstream_error', message: '' };
+      if (error.code === 'user_changed') { state.phase = 'stopped'; stopWatching(); render(); return; }
+      if (DENIAL_CODES.has(error.code)) return handleDenial(error);
+      // Transient: keep the last good balance for this row, otherwise mark the row.
+      if (!state.balances[id]) state.balanceErrors[id] = error;
+      render(); return;
+    }
+    const result = ev.result || {};
+    try {
+      const balance = parseBalance(result.payload, account.currency);
+      state.balances[id] = { ...balance, storedAt: (result.cache && result.cache.storedAt) || Date.now() };
+      delete state.balanceErrors[id];
+    } catch (e) {
+      if (!state.balances[id]) state.balanceErrors[id] = { code: 'parse_error', message: e.message };
+    }
+    render();
+  }
+
+  function reconcileBalanceWatches() {
+    const mcp = state.mcp;
+    const wanted = new Map(state.accounts.map((a) => [String(a.id), a]));
+    for (const id of Object.keys(state.balanceUnsubs)) {
+      if (wanted.has(id)) continue;
+      try { state.balanceUnsubs[id](); } catch {}
+      delete state.balanceUnsubs[id]; delete state.balances[id]; delete state.balanceErrors[id];
+    }
+    for (const [id, account] of wanted) {
+      if (state.balanceUnsubs[id]) continue;
+      if (Object.keys(state.balanceUnsubs).length >= MAX_WATCHES) {
+        state.balanceErrors[id] = { code: 'limit', message: 'Too many accounts to watch at once.' };
+        continue;
+      }
+      const accountId = typeof account.id === 'string' && /^\d+$/.test(account.id) ? Number(account.id) : account.id;
+      // Store the unsubscribe before anything can fire.
+      state.balanceUnsubs[id] = mcp.watchTool(SERVER, BALANCE_TOOL, { accountId }, (ev) => onBalanceEvent(id, account, ev),
+        { cache: { staleTime: STALE_MS }, refetchInterval: POLL_MS });
+    }
+  }
+
+  async function refresh() {
+    if (!state.mcp || state.phase !== 'live' || state.refreshing) return;
+    state.refreshing = true;
+    state.transientError = null;
+    render();
+    try { await state.mcp.invalidate(SERVER); } catch {}
+    clearTimeout(state.refreshTimer);
+    state.refreshTimer = setTimeout(() => { if (state.refreshing) { state.refreshing = false; render(); } }, 30000);
+  }
+
+  async function boot(fromGesture) {
+    stopWatching();
+    state.phase = 'booting';
+    state.transientError = null;
+    render();
+
+    const claude = window.claude;
+    const mcp = claude && typeof claude.use === 'function' ? await claude.use('mcp').catch(() => null) : null;
+    if (!mcp) { state.phase = 'setup'; render(); renderSetup('no-runtime'); return; }
+    state.mcp = mcp;
+
+    // Listing never asks the viewer anything; it tells us whether the connector exists for them.
+    let info = null;
+    try {
+      const listed = await mcp.listTools(SERVER);
+      info = (listed && listed.servers || []).find((s) => s.server === SERVER) || null;
+    } catch (e) {
+      if (e && DENIAL_CODES.has(e.code)) return handleDenial(e);
+      // Otherwise fall through: the first call decides.
+    }
+    if (info === null) return handleDenial({ code: 'server_not_connected', message: 'No Lunch Flow connector on this account.' });
+    if (info.authStatus === 'needs_reauth') return handleDenial({ code: 'needs_reauth', message: 'Lunch Flow login expired.' });
+
+    state.accountsUnsub = mcp.watchTool(SERVER, LIST_TOOL, null, onAccountsEvent, { cache: { staleTime: STALE_MS }, refetchInterval: POLL_MS });
+    void fromGesture;
+  }
+
+  els.refresh.addEventListener('click', refresh);
+  setInterval(renderUpdated, 30 * 1000);
+  let resizeTimer = null;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitTileValues, 100); });
+
+  boot(false);
+})();
+</script>

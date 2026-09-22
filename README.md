@@ -1,19 +1,33 @@
 # Moneta
 
-A small, self-hosted web page that shows the current balance of every bank account connected to your [Lunch Flow](https://lunchflow.app) account.
+A small web page that shows the current balance of every bank account connected to your [Lunch Flow](https://lunchflow.app) account.
 
 - One screen: totals per currency at the top, then each institution with its accounts and balances.
-- Zero dependencies. A single Node.js process serves the page and talks to the Lunch Flow API.
-- Your API key stays on the server. The browser only talks to this app.
-- Balances are cached for a few minutes so reloading the page does not hammer the API. The Refresh button forces a new fetch.
+- Two ways to run it: hosted on Claude with nothing to install, or self-hosted with a single zero-dependency Node.js process.
 
-## Requirements
+## Option 1: hosted on Claude, nothing to run
+
+`artifact/moneta.html` is a version of the page built to be published as a Claude Artifact. It reads balances through the **Lunch Flow connector** on your Claude account, using your own Lunch Flow login. No API key, no server, and it works from any device that can open Claude.
+
+One-time setup:
+
+1. In Lunch Flow, open **Destinations** and add an **MCP** destination. Copy the server URL it shows.
+2. In Claude, open **Settings**, then **Connectors**, and add a custom connector. Name it exactly `Lunch Flow`, paste the URL, and sign in when asked.
+3. Open the published page. Allow it to use Lunch Flow when Claude asks.
+
+The page refreshes every five minutes while open, and the Refresh button fetches immediately. It only works inside claude.ai or the Claude app, since that is where your connectors live.
+
+## Option 2: self-hosted
+
+A single Node.js process serves the page and talks to the Lunch Flow API with your API key. The key stays on the server; the browser only talks to this app. Balances are cached for a few minutes so reloading the page does not hammer the API, and the Refresh button forces a new fetch.
+
+### Requirements
 
 - Node.js 20 or newer.
 - A Lunch Flow account with at least one bank connected.
 - A Lunch Flow API key. In Lunch Flow, open **Destinations** and create an **API** destination. The key is shown in that destination's settings.
 
-## Quick start
+### Quick start
 
 ```bash
 git clone https://github.com/Napps9/moneta.git
@@ -30,7 +44,7 @@ Want to see it before creating a key? Run it with sample data:
 npm run mock
 ```
 
-## Configuration
+### Configuration
 
 Settings are read from environment variables, or from a `.env` file next to `server.js` (see `.env.example`).
 
@@ -43,7 +57,7 @@ Settings are read from environment variables, or from a `.env` file next to `ser
 | `PORT` | `3000` | Port to listen on. |
 | `CACHE_TTL_SECONDS` | `300` | How long fetched balances are reused before Lunch Flow is called again. |
 
-## How it works
+### How it works
 
 ```
 browser  ──GET /api/balances──▶  server.js  ──GET /accounts──────────────▶  Lunch Flow API
@@ -63,7 +77,7 @@ Routes served by the app:
 | `GET /api/balances` | JSON snapshot of accounts, balances and totals. Add `?refresh=1` to bypass the cache. |
 | `GET /api/health` | Returns `{ "ok": true }`. |
 
-## Development
+### Development
 
 ```bash
 npm run dev     # restarts on file changes
@@ -79,10 +93,11 @@ src/balances.js    snapshot builder: fan-out, totals, caching
 src/app.js         HTTP request handler: JSON API and static files
 src/mock.js        sample data used by `npm run mock`
 public/            the page (index.html, app.js, style.css)
+artifact/          the Claude-hosted version of the page (option 1)
 test/              tests
 ```
 
-## Security notes
+### Security notes
 
 - The server binds to `127.0.0.1` by default, so only your machine can reach it. If you expose it on your network, put it behind something that adds authentication. The app itself has none, and anyone who can reach it can see your balances.
 - The `.env` file is git-ignored. Never commit your API key.
