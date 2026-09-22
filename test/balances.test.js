@@ -53,6 +53,35 @@ test('snapshot joins balances, sorts accounts and computes totals per currency',
     { currency: 'EUR', current: 150.5, available: null, accountCount: 2, excludedCount: 0 },
     { currency: 'USD', current: -20, available: 200, accountCount: 1, excludedCount: 0 },
   ]);
+
+  assert.deepEqual(
+    snapshot.accounts.map((a) => [a.name, a.group]),
+    [['Current', 'spending'], ['USD Card', 'credit'], ['Savings', 'savings']],
+  );
+  assert.deepEqual(snapshot.groups, [
+    { id: 'savings', label: 'Savings', accountCount: 1, totals: [{ currency: 'EUR', current: 50.5, available: null, accountCount: 1, excludedCount: 0 }] },
+    { id: 'spending', label: 'Spending', accountCount: 1, totals: [{ currency: 'EUR', current: 100, available: 90, accountCount: 1, excludedCount: 0 }] },
+    { id: 'credit', label: 'Credit', accountCount: 1, totals: [{ currency: 'USD', current: -20, available: 200, accountCount: 1, excludedCount: 0 }] },
+  ]);
+});
+
+test('a custom groups config changes the snapshot grouping', async () => {
+  const { normalizeGroupsConfig } = await import('../src/groups.js');
+  const client = fakeClient({
+    accounts: ACCOUNTS,
+    balances: {
+      1: { current: 1, available: 1, currency: 'EUR' },
+      2: { current: 1, available: 1, currency: 'EUR' },
+      3: { current: 1, available: 1, currency: 'USD' },
+    },
+  });
+  const groupsConfig = normalizeGroupsConfig({ groups: ['mine'], accounts: { 'USD Card': 'mine' } });
+  const service = createBalanceService({ client, groupsConfig, logger: silent });
+
+  const snapshot = await service.getSnapshot();
+
+  assert.ok(snapshot.accounts.every((a) => a.group === 'mine'), 'the only group is also the default');
+  assert.deepEqual(snapshot.groups.map((g) => [g.id, g.label, g.accountCount]), [['mine', 'Mine', 3]]);
 });
 
 test('a failing balance marks the account and the snapshot as partial', async () => {

@@ -2,6 +2,8 @@ import { DEFAULT_BASE_URL, createLunchFlowClient } from './lunchflow.js';
 import { createMockClient } from './mock.js';
 import { createBalanceService } from './balances.js';
 import { createAuth } from './auth.js';
+import { loadGroupsConfig } from './groups.js';
+import groupsFile from '../groups.config.js';
 
 export const truthy = (value) => /^(1|true|yes)$/i.test(String(value ?? ''));
 
@@ -15,6 +17,7 @@ export const truthy = (value) => /^(1|true|yes)$/i.test(String(value ?? ''));
  *   CACHE_TTL_SECONDS        how long a fetched snapshot is reused (default 300)
  *   MONETA_PASSWORD          optional password the page must present
  *   MONETA_REQUIRE_PASSWORD  1 to refuse to serve balances until a password is set
+ *   MONETA_GROUPS            JSON with the same shape as groups.config.js; replaces the file when set
  */
 export function createRuntime(env = process.env, { mock = truthy(env.LUNCHFLOW_MOCK), logger = console } = {}) {
   const ttlRaw = Number(env.CACHE_TTL_SECONDS ?? '300');
@@ -26,11 +29,12 @@ export function createRuntime(env = process.env, { mock = truthy(env.LUNCHFLOW_M
     client = createLunchFlowClient({ apiKey: env.LUNCHFLOW_API_KEY, baseUrl: env.LUNCHFLOW_BASE_URL || DEFAULT_BASE_URL });
   }
 
-  const service = client ? createBalanceService({ client, ttlMs: ttlSeconds * 1000, logger }) : null;
+  const groupsConfig = loadGroupsConfig({ env, file: groupsFile, logger });
+  const service = client ? createBalanceService({ client, groupsConfig, ttlMs: ttlSeconds * 1000, logger }) : null;
   const auth = createAuth({
     password: env.MONETA_PASSWORD || '',
     required: truthy(env.MONETA_REQUIRE_PASSWORD),
   });
 
-  return { mock, client, service, auth, ttlSeconds };
+  return { mock, client, service, auth, groupsConfig, ttlSeconds };
 }

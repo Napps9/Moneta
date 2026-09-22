@@ -7,14 +7,33 @@ const refreshBtn = document.getElementById('refresh');
 const lockBtn = document.getElementById('lock');
 const cacheHintEl = document.getElementById('cache-hint');
 
+const viewToggleEl = document.getElementById('view-toggle');
+
 const AUTO_RELOAD_MS = 60_000;
 const PASSWORD_KEY = 'moneta.password';
+const VIEW_KEY = 'moneta.view';
+
+function readView() {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'bank' ? 'bank' : 'type';
+  } catch {
+    return 'type';
+  }
+}
+function writeView(view) {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    /* per-browser convenience only */
+  }
+}
 
 const state = {
   data: null,
   loading: false,
   error: null,
   gate: null, // null | { kind: 'password' | 'unconfigured', message }
+  view: readView(), // 'type' (savings / spending / credit) or 'bank' (by institution)
 };
 
 const STATUS = {
@@ -116,11 +135,16 @@ function groupByInstitution(accounts) {
 
 // ---------- rendering ----------
 
-function renderLogo(group) {
-  const fallback = el('div', { class: 'logo-fallback', 'aria-hidden': 'true', text: group.name.trim().charAt(0) || '?' });
+function renderLogo(group, size = '') {
+  const suffix = size ? `--${size}` : '';
+  const fallback = el('div', {
+    class: `logo-fallback${suffix ? ` logo-fallback${suffix}` : ''}`,
+    'aria-hidden': 'true',
+    text: group.name.trim().charAt(0) || '?',
+  });
   if (!group.logo || !/^https?:\/\//i.test(group.logo)) return fallback;
   const img = el('img', {
-    class: 'logo',
+    class: `logo${suffix ? ` logo${suffix}` : ''}`,
     src: group.logo,
     alt: '',
     loading: 'lazy',
@@ -130,14 +154,20 @@ function renderLogo(group) {
   return img;
 }
 
+function renderTotals(totals) {
+  const items = totals && totals.length > 0 ? totals.map((total) => formatMoney(total.current, total.currency)) : ['—'];
+  return el('div', { class: 'group-totals' }, items.map((text) => el('span', { text })));
+}
+
 function renderBadge(status) {
   const info = STATUS[status] || { label: status ? status.toLowerCase() : 'Unknown', kind: 'neutral' };
   return el('span', { class: `badge badge--${info.kind}`, text: info.label });
 }
 
-function renderAccountRow(account) {
+function renderAccountRow(account, { showInstitution = false } = {}) {
   const inactive = account.status !== 'ACTIVE';
   const meta = [];
+  if (showInstitution) meta.push(el('span', { text: account.institutionName }));
   if (inactive) meta.push(renderBadge(account.status));
   if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
     meta.push(el('span', { text: `Available ${formatMoney(account.balance.available, account.balance.currency)}` }));
@@ -152,10 +182,35 @@ function renderAccountRow(account) {
 
   return el(
     'li',
-    { class: `row${inactive ? ' row--inactive' : ''}` },
+    { class: `row${inactive ? ' row--inactive' : ''}${showInstitution ? ' row--with-logo' : ''}` },
+    showInstitution ? renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'small') : null,
     el('div', { class: 'row-main' }, el('div', { class: 'row-name', text: account.name }), el('div', { class: 'row-meta' }, meta)),
     amount,
   );
+}
+
+function renderGroup(group, accounts) {
+  const members = accounts.filter((account) => account.group === group.id);
+  if (members.length === 0) return null;
+  return el(
+    'section',
+    { class: 'group', 'aria-label': group.label },
+    el(
+      'div',
+      { class: 'group-head' },
+      el('div', { class: 'group-title' }, el('h2', { text: group.label }), el('span', { class: 'group-count', text: plural(members.length, 'account') })),
+      renderTotals(group.totals),
+    ),
+    el('ul', { class: 'rows' }, members.map((account) => renderAccountRow(account, { showInstitution: true }))),
+  );
+}
+
+function renderViewToggle() {
+  const hasGroups = Boolean(state.data && Array.isArray(state.data.groups) && state.data.groups.length > 0);
+  viewToggleEl.hidden = !hasGroups;
+  for (const button of viewToggleEl.querySelectorAll('.seg-btn')) {
+    button.setAttribute('aria-pressed', button.dataset.view === state.view ? 'true' : 'false');
+  }
 }
 
 function renderInstitution(group) {
@@ -367,7 +422,13 @@ function renderData() {
   }
   fitTileValues();
 
-  accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
+  renderViewToggle();
+  const byType = state.view === 'type' && Array.isArray(data.groups) && data.groups.length > 0;
+  if (byType) {
+    accountsEl.replaceChildren(...data.groups.map((group) => renderGroup(group, data.accounts)).filter(Boolean));
+  } else {
+    accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
+  }
 
   if (data.ttlSeconds > 0) {
     const minutes = Math.round(data.ttlSeconds / 60);
@@ -391,6 +452,7 @@ function render() {
     renderGate();
     totalsEl.replaceChildren();
     accountsEl.replaceChildren();
+    viewToggleEl.hidden = true;
     cacheHintEl.textContent = '';
     return;
   }
@@ -398,8 +460,11 @@ function render() {
   gateEl.replaceChildren();
 
   if (state.data) renderData();
-  else if (state.loading) renderSkeletons();
-  else {
+  else if (state.loading) {
+    viewToggleEl.hidden = true;
+    renderSkeletons();
+  } else {
+    viewToggleEl.hidden = true;
     totalsEl.replaceChildren();
     accountsEl.replaceChildren();
   }
@@ -447,6 +512,13 @@ async function load({ refresh = false } = {}) {
 }
 
 refreshBtn.addEventListener('click', () => load({ refresh: true }));
+viewToggleEl.addEventListener('click', (event) => {
+  const button = event.target.closest('.seg-btn');
+  if (!button || button.dataset.view === state.view) return;
+  state.view = button.dataset.view === 'bank' ? 'bank' : 'type';
+  writeView(state.view);
+  render();
+});
 lockBtn.addEventListener('click', () => {
   sessionPassword = '';
   writePassword('');

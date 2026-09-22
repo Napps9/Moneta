@@ -27,7 +27,15 @@
       <section id="gate" hidden></section>
       <section id="notice" class="notice" role="status" hidden></section>
       <section id="totals" class="totals" aria-label="Totals per currency"></section>
-      <section id="accounts" class="accounts" aria-label="Accounts"></section>
+      <section class="accounts-block" aria-label="Accounts">
+        <div id="view-toggle" class="list-tools" role="group" aria-label="Group accounts by" hidden>
+          <div class="segmented">
+            <button type="button" class="seg-btn" data-view="type" aria-pressed="true">By type</button>
+            <button type="button" class="seg-btn" data-view="bank" aria-pressed="false">By bank</button>
+          </div>
+        </div>
+        <div id="accounts" class="accounts"></div>
+      </section>
     </main>
 
     <footer class="footer">

@@ -3,6 +3,7 @@
  * per-account balance calls with bounded concurrency and caching the result
  * so the page can be reloaded freely without hammering the Lunch Flow API.
  */
+import { classifyAccount, normalizeGroupsConfig } from './groups.js';
 
 export async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -64,6 +65,7 @@ export function computeTotals(accounts) {
 
 export function createBalanceService({
   client,
+  groupsConfig = normalizeGroupsConfig({}),
   ttlMs = 5 * 60 * 1000,
   concurrency = 4,
   now = () => Date.now(),
@@ -90,11 +92,16 @@ export function createBalanceService({
         return { ...account, balance: null, error: message };
       }
     });
-    const sorted = sortAccounts(withBalances);
+    const sorted = sortAccounts(withBalances).map((account) => ({ ...account, group: classifyAccount(account, groupsConfig) }));
+    const groups = groupsConfig.groups.map((group) => {
+      const members = sorted.filter((account) => account.group === group.id);
+      return { id: group.id, label: group.label, accountCount: members.length, totals: computeTotals(members) };
+    });
     return {
       fetchedAt: new Date(now()).toISOString(),
       accounts: sorted,
       totals: computeTotals(sorted),
+      groups,
       partial: sorted.some((account) => account.error !== null),
     };
   }

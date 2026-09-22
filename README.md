@@ -34,6 +34,31 @@ One-time setup:
 
 The page refreshes every five minutes while open, and the Refresh button fetches immediately. It only works inside claude.ai or the Claude app, since that is where your connectors live.
 
+## Grouping accounts
+
+The page groups accounts into **Savings**, **Spending** and **Credit**, with a subtotal per group, and a "By bank" toggle to see them per institution instead. Lunch Flow does not say what kind of account something is, so the group is worked out from the account name: words like *saver*, *savings*, *ISA* or *pot* mean savings; *credit*, *card*, *flex* or *loan* mean credit; accounts from card issuers such as American Express are credit; everything else is spending.
+
+To change an assignment, edit `groups.config.js` and push (Vercel redeploys). On GitHub you can do that from the file's page with the pencil icon.
+
+```js
+export default {
+  groups: [
+    { id: 'savings', label: 'Savings' },
+    { id: 'spending', label: 'Spending' },
+    { id: 'credit', label: 'Credit' },
+  ],
+  accounts: {
+    'Account 1': 'savings',                 // by account name
+    'Monzo · Personal Account': 'spending', // by "Institution · Account name"
+    '12345': 'credit',                      // by account id
+  },
+  keywords: { savings: ['rainy day'] },     // extra words, added to the built-in ones
+  defaultGroup: 'spending',
+};
+```
+
+You can rename groups, reorder them, or add your own (for example a `business` group with `keywords: { business: ['ltd'] }`). Keywords are checked in the order the groups are listed. Setting a `MONETA_GROUPS` environment variable to the same structure as JSON replaces the file entirely.
+
 ## Option 3: self-hosted
 
 A single Node.js process serves the page and talks to the Lunch Flow API with your API key. The key stays on the server; the browser only talks to this app. Balances are cached for a few minutes so reloading the page does not hammer the API, and the Refresh button forces a new fetch.
@@ -75,6 +100,7 @@ Settings are read from environment variables, or from a `.env` file next to `ser
 | `CACHE_TTL_SECONDS` | `300` | How long fetched balances are reused before Lunch Flow is called again. |
 | `MONETA_PASSWORD` | unset | Optional. If set, the page asks for this password before showing balances. |
 | `MONETA_REQUIRE_PASSWORD` | unset | Optional. Set to `1` to refuse to serve balances until a password is set. |
+| `MONETA_GROUPS` | unset | Optional. JSON with the structure of `groups.config.js`; replaces that file when set. |
 
 ### How it works
 
@@ -113,7 +139,9 @@ api/               Vercel serverless functions (balances, health)
 vercel.json        Vercel settings: static output from public/, security headers
 src/runtime.js     builds the client, snapshot service and password gate from the environment
 src/lunchflow.js   Lunch Flow API client and response normalization
-src/balances.js    snapshot builder: fan-out, totals, caching
+src/balances.js    snapshot builder: fan-out, totals, grouping, caching
+src/groups.js      puts accounts into groups from names and the config
+groups.config.js   your group names and manual account assignments
 src/auth.js        password gate for the API
 src/app.js         HTTP handlers: JSON API and static files
 src/mock.js        sample data used by `npm run mock`
