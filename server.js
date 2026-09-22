@@ -44,6 +44,13 @@ if (runtime.mock) {
 if (runtime.auth.enabled) {
   console.log(runtime.auth.configured ? 'Password protection is on.' : 'Password protection is required but MONETA_PASSWORD is not set; the API will refuse requests.');
 }
+console.log(
+  runtime.settingsStore.kind === 'redis'
+    ? 'Account settings are stored in Redis.'
+    : runtime.settingsStore.kind === 'file'
+      ? `Account settings are stored in ${path.resolve(here, process.env.MONETA_DATA_DIR || 'data')}/settings.json.`
+      : 'Account settings are kept in the browser only.',
+);
 
 const server = http.createServer(
   createRequestHandler({ service: runtime.service, auth: runtime.auth, publicDir: path.join(here, 'public') }),

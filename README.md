@@ -38,7 +38,25 @@ The page refreshes every five minutes while open, and the Refresh button fetches
 
 The page groups accounts into **Savings**, **Spending** and **Credit**, with a subtotal per group, and a "By bank" toggle to see them per institution instead. Lunch Flow does not say what kind of account something is, so the group is worked out from the account name: words like *saver*, *savings*, *ISA* or *pot* mean savings; *credit*, *card*, *flex* or *loan* mean credit; accounts from card issuers such as American Express are credit; everything else is spending.
 
-To change an assignment, edit `groups.config.js` and push (Vercel redeploys). On GitHub you can do that from the file's page with the pencil icon.
+### Adjusting an account in the app
+
+Every account row has a pencil button. It opens a small editor with two settings:
+
+- **Group**: leave it on Automatic, or pick a group.
+- **Balance**: how to read the number Lunch Flow reports.
+  - *As reported*: the default.
+  - *Amount owed, shown as negative*: for cards where the bank reports what you owe as a positive number.
+  - *Amount left to spend on a card*: for cards where the bank reports the remaining credit. Enter the card's credit limit, and the page shows what you owe (limit minus remaining) as a negative amount, with the remaining credit underneath.
+
+Where those settings are kept depends on the deployment:
+
+- **Vercel, out of the box**: in the browser you made them in. Each device has its own.
+- **Vercel with Upstash Redis**: shared across every device. In your Vercel project open **Storage**, create an **Upstash Redis** store (free tier is plenty), connect it to the project, and redeploy. The store adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` to the project; the app picks them up and, on the next visit, moves any settings from that browser into the store.
+- **Self-hosted**: in `data/settings.json` next to the server (`MONETA_DATA_DIR` to change it).
+
+### Defaults in a file
+
+`groups.config.js` sets the group names and order, the words that put an account in a group, and can hold fixed assignments too. Settings made in the app take precedence over it. Edit the file and push (Vercel redeploys); on GitHub you can do that from the file's page with the pencil icon.
 
 ```js
 export default {
@@ -101,6 +119,8 @@ Settings are read from environment variables, or from a `.env` file next to `ser
 | `MONETA_PASSWORD` | unset | Optional. If set, the page asks for this password before showing balances. |
 | `MONETA_REQUIRE_PASSWORD` | unset | Optional. Set to `1` to refuse to serve balances until a password is set. |
 | `MONETA_GROUPS` | unset | Optional. JSON with the structure of `groups.config.js`; replaces that file when set. |
+| `MONETA_DATA_DIR` | `data` | Self-hosted only. Where settings made in the app are stored. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | unset | Upstash Redis over REST, for settings shared across devices. `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` work too. |
 
 ### How it works
 
@@ -119,7 +139,8 @@ Routes served by the app:
 | Route | Description |
 | --- | --- |
 | `GET /` | The page. |
-| `GET /api/balances` | JSON snapshot of accounts, balances and totals. Add `?refresh=1` to bypass the cache. |
+| `GET /api/balances` | JSON snapshot of accounts, balances, groups and totals. Add `?refresh=1` to bypass the cache. When the server has no settings store, the page sends its settings in an `x-moneta-settings` header. |
+| `GET`, `PUT /api/settings` | Read or replace the per-account settings made in the app. |
 | `GET /api/health` | Returns `{ "ok": true, "passwordRequired": false }`. |
 
 When a password is set, `GET /api/balances` expects an `Authorization: Bearer <password>` header and answers `401` without it. The page handles this by asking for the password and remembering it in that browser.
@@ -141,7 +162,9 @@ src/runtime.js     builds the client, snapshot service and password gate from th
 src/lunchflow.js   Lunch Flow API client and response normalization
 src/balances.js    snapshot builder: fan-out, totals, grouping, caching
 src/groups.js      puts accounts into groups from names and the config
-groups.config.js   your group names and manual account assignments
+src/settings.js    per-account settings made in the app, and where they are stored
+groups.config.js   group names, keywords and fixed assignments
+api/               Vercel serverless functions (balances, settings, health)
 src/auth.js        password gate for the API
 src/app.js         HTTP handlers: JSON API and static files
 src/mock.js        sample data used by `npm run mock`

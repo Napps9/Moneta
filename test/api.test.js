@@ -24,6 +24,8 @@ test('serverless functions serve balances openly when no password is configured'
     const body = await res.json();
     assert.equal(body.accounts.length, 7);
     assert.ok(body.totals.length >= 2);
+    assert.equal(body.settings.persistent, false, 'no Redis configured: settings stay in the browser');
+    assert.equal(body.settings.kind, 'memory');
 
     const cached = await (await fetch(`${base}/api/balances`)).json();
     assert.equal(cached.cached, true, 'the cache is shared across invocations of the same instance');

@@ -8,10 +8,48 @@ const lockBtn = document.getElementById('lock');
 const cacheHintEl = document.getElementById('cache-hint');
 
 const viewToggleEl = document.getElementById('view-toggle');
+const editorEl = document.getElementById('editor');
+const editorForm = document.getElementById('editor-form');
+const editorTitle = document.getElementById('editor-title');
+const editorSub = document.getElementById('editor-sub');
+const editorGroup = document.getElementById('editor-group');
+const editorBalance = document.getElementById('editor-balance');
+const editorLimitField = document.getElementById('editor-limit-field');
+const editorLimit = document.getElementById('editor-limit');
+const editorExplain = document.getElementById('editor-explain');
+const editorError = document.getElementById('editor-error');
+const editorHint = document.getElementById('editor-hint');
+const editorCancel = document.getElementById('editor-cancel');
+const editorSave = document.getElementById('editor-save');
 
 const AUTO_RELOAD_MS = 60_000;
 const PASSWORD_KEY = 'moneta.password';
 const VIEW_KEY = 'moneta.view';
+const SETTINGS_KEY = 'moneta.settings';
+
+const TREATMENT_HELP = {
+  reported: 'Uses the number exactly as Lunch Flow reports it.',
+  negate: 'Lunch Flow reports what you owe as a positive number. It will be shown as negative and subtracted from the totals.',
+  'credit-limit': 'Lunch Flow reports what is left to spend. What you owe is the credit limit minus that, shown as negative.',
+};
+
+// Settings kept in this browser, used when the server has nowhere to store them.
+function readLocalSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    return parsed && typeof parsed.accounts === 'object' && parsed.accounts ? parsed.accounts : {};
+  } catch {
+    return {};
+  }
+}
+function writeLocalSettings(accounts) {
+  try {
+    if (accounts && Object.keys(accounts).length > 0) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts }));
+    else localStorage.removeItem(SETTINGS_KEY);
+  } catch {
+    /* storage unavailable: settings last for this page load only */
+  }
+}
 
 function readView() {
   try {
@@ -34,6 +72,9 @@ const state = {
   error: null,
   gate: null, // null | { kind: 'password' | 'unconfigured', message }
   view: readView(), // 'type' (savings / spending / credit) or 'bank' (by institution)
+  settings: { persistent: null, kind: null, error: null, accounts: readLocalSettings() },
+  editing: null, // the account open in the editor
+  migrated: false,
 };
 
 const STATUS = {
@@ -164,12 +205,36 @@ function renderBadge(status) {
   return el('span', { class: `badge badge--${info.kind}`, text: info.label });
 }
 
+function pencilIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z']) {
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
+  return svg;
+}
+
 function renderAccountRow(account, { showInstitution = false } = {}) {
   const inactive = account.status !== 'ACTIVE';
   const meta = [];
   if (showInstitution) meta.push(el('span', { text: account.institutionName }));
   if (inactive) meta.push(renderBadge(account.status));
-  if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
+  if (account.balance && account.balance.treatment === 'credit-limit') {
+    meta.push(
+      el('span', {
+        text: `${formatMoney(account.balance.available, account.balance.currency)} left of ${formatMoney(account.balance.limit, account.balance.currency)}`,
+      }),
+    );
+  } else if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
     meta.push(el('span', { text: `Available ${formatMoney(account.balance.available, account.balance.currency)}` }));
   }
   if (account.error) {
@@ -186,8 +251,116 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
     showInstitution ? renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'small') : null,
     el('div', { class: 'row-main' }, el('div', { class: 'row-name', text: account.name }), el('div', { class: 'row-meta' }, meta)),
     amount,
+    el('button', { class: 'row-edit', type: 'button', 'aria-label': `Edit ${account.name}`, title: 'Edit', onclick: () => openEditor(account) }, pencilIcon()),
   );
 }
+
+// ---------- per-account editor ----------
+
+function groupLabel(id) {
+  const options = (state.data && state.data.groupOptions) || [];
+  const match = options.find((option) => option.id === id);
+  return match ? match.label : id;
+}
+
+function updateEditorFields() {
+  const mode = editorBalance.value;
+  editorLimitField.hidden = mode !== 'credit-limit';
+  editorExplain.textContent = TREATMENT_HELP[mode] || '';
+  editorLimit.removeAttribute('aria-invalid');
+}
+
+function openEditor(account) {
+  if (typeof editorEl.showModal !== 'function') return;
+  state.editing = account;
+  editorTitle.textContent = account.name;
+  const reported = account.balance ? `Lunch Flow reports ${formatMoney(account.balance.reported, account.balance.currency)}` : 'No balance available';
+  editorSub.textContent = `${account.institutionName} · ${reported}`;
+
+  const options = [el('option', { value: '', text: `Automatic (${groupLabel(account.autoGroup)})` })];
+  for (const option of (state.data && state.data.groupOptions) || []) {
+    options.push(el('option', { value: option.id, text: option.label }));
+  }
+  editorGroup.replaceChildren(...options);
+  editorGroup.value = account.settings && account.settings.group ? account.settings.group : '';
+  editorBalance.value = (account.settings && account.settings.balance) || 'reported';
+  editorLimit.value = account.settings && account.settings.limit != null ? String(account.settings.limit) : '';
+  editorError.hidden = true;
+  editorError.textContent = '';
+  editorHint.textContent =
+    state.settings.persistent === true
+      ? 'Saved for every device you open this page on.'
+      : 'Saved in this browser only. To share settings across devices, add Upstash Redis under Storage in your Vercel project.';
+  editorSave.disabled = false;
+  updateEditorFields();
+  editorEl.showModal();
+}
+
+function closeEditor() {
+  state.editing = null;
+  if (editorEl.open) editorEl.close();
+}
+
+async function saveSettings(accounts) {
+  if (state.settings.persistent === true) {
+    const headers = { 'content-type': 'application/json', accept: 'application/json' };
+    const password = sessionPassword || readPassword();
+    if (password) headers.authorization = `Bearer ${password}`;
+    const res = await fetch('/api/settings', { method: 'PUT', headers, body: JSON.stringify({ accounts }) });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((body && (body.message || body.error)) || `Saving failed with status ${res.status}`);
+    state.settings = { ...state.settings, persistent: body.persistent, kind: body.kind, error: body.error ?? null, accounts: body.accounts };
+    return;
+  }
+  writeLocalSettings(accounts);
+  state.settings = { ...state.settings, accounts };
+}
+
+async function submitEditor(event) {
+  event.preventDefault();
+  const account = state.editing;
+  if (!account) return;
+
+  const entry = {};
+  if (editorGroup.value) entry.group = editorGroup.value;
+  const mode = editorBalance.value;
+  if (mode === 'negate') entry.balance = 'negate';
+  if (mode === 'credit-limit') {
+    const limit = Number(editorLimit.value);
+    if (editorLimit.value.trim() === '' || !Number.isFinite(limit) || limit < 0) {
+      editorLimit.setAttribute('aria-invalid', 'true');
+      editorError.textContent = 'Enter the card’s credit limit so the amount owed can be worked out.';
+      editorError.hidden = false;
+      editorLimit.focus();
+      return;
+    }
+    entry.balance = 'credit-limit';
+    entry.limit = limit;
+  }
+
+  const accounts = { ...state.settings.accounts };
+  if (Object.keys(entry).length > 0) accounts[String(account.id)] = entry;
+  else delete accounts[String(account.id)];
+
+  editorSave.disabled = true;
+  try {
+    await saveSettings(accounts);
+  } catch (err) {
+    editorError.textContent = err && err.message ? err.message : 'Could not save.';
+    editorError.hidden = false;
+    editorSave.disabled = false;
+    return;
+  }
+  closeEditor();
+  load();
+}
+
+editorForm.addEventListener('submit', submitEditor);
+editorBalance.addEventListener('change', updateEditorFields);
+editorCancel.addEventListener('click', closeEditor);
+editorEl.addEventListener('close', () => {
+  state.editing = null;
+});
 
 function renderGroup(group, accounts) {
   const members = accounts.filter((account) => account.group === group.id);
@@ -481,6 +654,10 @@ async function load({ refresh = false } = {}) {
     const headers = { accept: 'application/json' };
     const password = sessionPassword || readPassword();
     if (password) headers.authorization = `Bearer ${password}`;
+    // Until the server says it stores settings itself, send the ones kept in this browser.
+    if (state.settings.persistent !== true && Object.keys(state.settings.accounts).length > 0) {
+      headers['x-moneta-settings'] = JSON.stringify({ accounts: state.settings.accounts });
+    }
 
     const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers });
     const body = await res.json().catch(() => null);
@@ -503,6 +680,32 @@ async function load({ refresh = false } = {}) {
     }
     state.gate = null;
     state.data = body;
+    if (body.settings) {
+      const local = readLocalSettings();
+      if (body.settings.persistent === true) {
+        // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
+        if (!state.migrated && Object.keys(local).length > 0 && Object.keys(body.settings.accounts || {}).length === 0) {
+          state.migrated = true;
+          state.settings = { persistent: true, kind: body.settings.kind, error: null, accounts: {} };
+          try {
+            await saveSettings(local);
+            writeLocalSettings(null);
+            state.loading = false;
+            return load();
+          } catch {
+            /* keep the local copy; the next save will try again */
+          }
+        } else {
+          writeLocalSettings(null);
+        }
+      }
+      state.settings = {
+        persistent: body.settings.persistent,
+        kind: body.settings.kind,
+        error: body.settings.error ?? null,
+        accounts: body.settings.persistent ? body.settings.accounts || {} : local,
+      };
+    }
   } catch (err) {
     state.error = err && err.message ? err.message : 'Unknown error';
   } finally {

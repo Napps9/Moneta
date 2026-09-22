@@ -8,6 +8,9 @@ import { createBalanceService } from '../src/balances.js';
 import { createMockClient } from '../src/mock.js';
 import { LunchFlowError } from '../src/lunchflow.js';
 import { createAuth } from '../src/auth.js';
+import { createFileStore } from '../src/settings.js';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, '..', 'public');
@@ -78,6 +81,51 @@ test('unsupported methods and unknown API routes are rejected', async () => {
   assert.equal(missing.status, 404);
   const health = await fetch(`${base}/api/health`);
   assert.deepEqual(await health.json(), { ok: true, passwordRequired: false });
+});
+
+test('settings sent in a header shape the response when the server cannot store them', async () => {
+  const res = await fetch(`${base}/api/balances`, {
+    headers: { 'x-moneta-settings': JSON.stringify({ accounts: { 101: { group: 'credit' } } }) },
+  });
+  const body = await res.json();
+  assert.equal(body.settings.persistent, false);
+  assert.equal(body.accounts.find((a) => a.id === 101).group, 'credit');
+  assert.deepEqual(body.settings.accounts, { 101: { group: 'credit' } });
+
+  const junk = await fetch(`${base}/api/balances`, { headers: { 'x-moneta-settings': '{nope' } });
+  assert.equal(junk.status, 200, 'an unreadable header is ignored');
+});
+
+test('settings can be read and written when a store is configured', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'moneta-app-'));
+  const settingsStore = createFileStore(path.join(dir, 'settings.json'));
+  const service = createBalanceService({ client: createMockClient({ delayMs: 0 }), settingsStore, logger: silent });
+  const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
+  try {
+    const before = await (await fetch(`${stored}/api/settings`)).json();
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, groups: before.groups });
+    assert.equal(before.groups.length, 3);
+
+    const put = await fetch(`${stored}/api/settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accounts: { 101: { balance: 'credit-limit', limit: 5000 } } }),
+    });
+    assert.equal(put.status, 200);
+    assert.deepEqual((await put.json()).accounts, { 101: { balance: 'credit-limit', limit: 5000 } });
+
+    const balances = await (await fetch(`${stored}/api/balances`)).json();
+    const account = balances.accounts.find((a) => a.id === 101);
+    assert.equal(account.balance.treatment, 'credit-limit');
+    assert.equal(account.balance.current, -(5000 - 2510.43));
+
+    const bad = await fetch(`${stored}/api/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{nope' });
+    assert.equal(bad.status, 400);
+    const wrongMethod = await fetch(`${stored}/api/settings`, { method: 'POST' });
+    assert.equal(wrongMethod.status, 405);
+  } finally {
+    server.close();
+  }
 });
 
 test('a password protects the API but not the page shell', async () => {

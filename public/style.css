@@ -559,6 +559,134 @@ a {
   }
 }
 
+/* Per-account editing */
+
+.row-edit {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 0;
+}
+
+.row-edit:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.row-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.row-edit svg {
+  width: 15px;
+  height: 15px;
+}
+
+.editor {
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 20px 22px;
+  width: min(440px, calc(100vw - 32px));
+  box-shadow: 0 0 0 1px var(--ring), 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.editor::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.editor h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.editor-sub {
+  margin: 2px 0 16px;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.field > span {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.field select,
+.field input {
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--page);
+  color: var(--ink);
+  width: 100%;
+}
+
+.field select:focus-visible,
+.field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.field input[aria-invalid="true"] {
+  border-color: var(--critical);
+}
+
+.editor-explain {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.editor-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.editor-error::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--critical);
+}
+
+.editor-hint {
+  margin: 0 0 16px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* Password gate */
 
 .gate {

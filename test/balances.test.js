@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeTotals, createBalanceService, mapWithConcurrency } from '../src/balances.js';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { applyTreatment, computeTotals, createBalanceService, mapWithConcurrency } from '../src/balances.js';
+import { createFileStore } from '../src/settings.js';
 
 const silent = { warn() {}, error() {} };
 
@@ -63,6 +67,97 @@ test('snapshot joins balances, sorts accounts and computes totals per currency',
     { id: 'spending', label: 'Spending', accountCount: 1, totals: [{ currency: 'EUR', current: 100, available: 90, accountCount: 1, excludedCount: 0 }] },
     { id: 'credit', label: 'Credit', accountCount: 1, totals: [{ currency: 'USD', current: -20, available: 200, accountCount: 1, excludedCount: 0 }] },
   ]);
+});
+
+test('applyTreatment reads the reported number three ways', () => {
+  const account = { id: 1, balance: { current: 1380.42, available: null, currency: 'GBP' } };
+  assert.deepEqual(applyTreatment(account).balance, { current: 1380.42, available: null, currency: 'GBP', treatment: 'reported', reported: 1380.42 });
+  assert.deepEqual(applyTreatment(account, { balance: 'negate' }).balance, { current: -1380.42, available: null, currency: 'GBP', treatment: 'negate', reported: 1380.42 });
+  assert.deepEqual(applyTreatment(account, { balance: 'credit-limit', limit: 5000 }).balance, {
+    current: -3619.58,
+    available: 1380.42,
+    currency: 'GBP',
+    treatment: 'credit-limit',
+    limit: 5000,
+    reported: 1380.42,
+  });
+  assert.equal(applyTreatment(account, { balance: 'credit-limit' }).balance.treatment, 'reported', 'no limit means no treatment');
+  assert.equal(applyTreatment({ id: 2, balance: null, error: 'x' }, { balance: 'negate' }).balance, null);
+});
+
+test('settings sent with the request are applied when the store is not persistent', async () => {
+  const client = fakeClient({
+    accounts: ACCOUNTS,
+    balances: {
+      1: { current: 100, available: 90, currency: 'EUR' },
+      2: { current: 50, available: 50, currency: 'EUR' },
+      3: { current: 1380.42, available: null, currency: 'USD' },
+    },
+  });
+  const service = createBalanceService({ client, logger: silent });
+
+  const plain = await service.getSnapshot();
+  assert.equal(plain.settings.persistent, false);
+  assert.equal(plain.settings.kind, 'memory');
+  assert.deepEqual(plain.settings.accounts, {});
+  assert.deepEqual(plain.groupOptions.map((g) => g.id), ['savings', 'spending', 'credit']);
+
+  const tuned = await service.getSnapshot({
+    settings: { accounts: { 1: { group: 'savings' }, 3: { balance: 'credit-limit', limit: 5000 } } },
+  });
+  const current = tuned.accounts.find((a) => a.id === 1);
+  assert.equal(current.group, 'savings');
+  assert.equal(current.autoGroup, 'spending');
+  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null });
+  const card = tuned.accounts.find((a) => a.id === 3);
+  assert.equal(card.balance.current, -3619.58);
+  assert.equal(card.balance.treatment, 'credit-limit');
+  assert.deepEqual(tuned.groups.map((g) => [g.id, g.accountCount]), [['savings', 2], ['spending', 0], ['credit', 1]]);
+  assert.equal(tuned.totals.find((t) => t.currency === 'USD').current, -3619.58);
+  assert.equal(client.calls.listAccounts, 1, 'settings never refetch balances');
+});
+
+test('a persistent store is the source of truth and can be updated', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'moneta-balances-'));
+  const settingsStore = createFileStore(path.join(dir, 'settings.json'));
+  const client = fakeClient({
+    accounts: ACCOUNTS,
+    balances: {
+      1: { current: 1, available: 1, currency: 'EUR' },
+      2: { current: 1, available: 1, currency: 'EUR' },
+      3: { current: 1, available: 1, currency: 'USD' },
+    },
+  });
+  const service = createBalanceService({ client, settingsStore, logger: silent });
+
+  const saved = await service.saveSettings({ accounts: { 2: { group: 'credit' }, 99: { group: 'bogus' } } });
+  assert.equal(saved.persistent, true);
+  assert.deepEqual(saved.accounts, { 2: { group: 'credit' } });
+
+  const snapshot = await service.getSnapshot({ settings: { accounts: { 2: { group: 'savings' } } } });
+  assert.equal(snapshot.settings.persistent, true);
+  assert.equal(snapshot.accounts.find((a) => a.id === 2).group, 'credit', 'sent settings are ignored when the store persists');
+
+  const fetched = await service.getSettings();
+  assert.deepEqual(fetched.accounts, { 2: { group: 'credit' } });
+  assert.deepEqual(fetched.groups.map((g) => g.id), ['savings', 'spending', 'credit']);
+});
+
+test('a failing settings store does not take the balances down', async () => {
+  const settingsStore = {
+    kind: 'redis',
+    persistent: true,
+    async read() {
+      throw new Error('WRONGPASS');
+    },
+    async write() {},
+  };
+  const client = fakeClient({ accounts: ACCOUNTS.slice(0, 1), balances: { 2: { current: 1, available: 1, currency: 'EUR' } } });
+  const service = createBalanceService({ client, settingsStore, logger: silent });
+  const snapshot = await service.getSnapshot();
+  assert.equal(snapshot.accounts.length, 1);
+  assert.equal(snapshot.settings.persistent, true);
+  assert.match(snapshot.settings.error, /WRONGPASS/);
 });
 
 test('a custom groups config changes the snapshot grouping', async () => {

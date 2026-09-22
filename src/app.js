@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { LunchFlowError } from './lunchflow.js';
+import { MAX_SETTINGS_BYTES, parseSettingsJson } from './settings.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -36,6 +37,39 @@ const sendJson = (req, res, status, body) => send(req, res, status, JSON.stringi
 const sendText = (req, res, status, body) => send(req, res, status, body, MIME['.txt']);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Read a JSON request body, whether the host already parsed it (Vercel) or it is still a stream. */
+async function readJsonBody(req, limit = MAX_SETTINGS_BYTES) {
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === 'object') return req.body;
+    return parseSettingsJson(String(req.body));
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new Error('Request body is too large');
+    chunks.push(chunk);
+  }
+  const text = Buffer.concat(chunks).toString('utf8');
+  return text ? parseSettingsJson(text) : {};
+}
+
+/** Settings the page sends along when the server has nowhere to keep them. */
+function settingsFromRequest(req) {
+  const header = req.headers['x-moneta-settings'];
+  if (!header) return null;
+  try {
+    return parseSettingsJson(Array.isArray(header) ? header[0] : header);
+  } catch {
+    return null;
+  }
+}
+
+function checkAuth(auth, req) {
+  if (!auth) return null;
+  return auth.check(req);
+}
+
 function describeUpstreamError(err) {
   if (err instanceof LunchFlowError) {
     if (err.status === 401 || err.status === 403) {
@@ -67,12 +101,10 @@ export function createBalancesHandler({ service = null, auth = null, logger = co
       res.setHeader('Allow', 'GET, HEAD');
       return sendJson(req, res, 405, { error: 'Method not allowed' });
     }
-    if (auth) {
-      const denied = auth.check(req);
-      if (denied) {
-        if (denied.status === 401 && denied.attempted) await sleep(300); // slow down guessing
-        return sendJson(req, res, denied.status, denied.body);
-      }
+    const denied = checkAuth(auth, req);
+    if (denied) {
+      if (denied.status === 401 && denied.attempted) await sleep(300); // slow down guessing
+      return sendJson(req, res, denied.status, denied.body);
     }
     if (!service) {
       return sendJson(req, res, 503, {
@@ -89,12 +121,46 @@ export function createBalancesHandler({ service = null, auth = null, logger = co
     }
     const refresh = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? '');
     try {
-      const data = await service.getSnapshot({ refresh });
+      const data = await service.getSnapshot({ refresh, settings: settingsFromRequest(req) });
       return sendJson(req, res, 200, data);
     } catch (err) {
       logger.error?.(`Balance snapshot failed: ${err && err.message ? err.message : err}`);
       const { status, body } = describeUpstreamError(err);
       return sendJson(req, res, status, body);
+    }
+  };
+}
+
+/** Handler for `GET` and `PUT /api/settings`: per-account settings made in the app. */
+export function createSettingsHandler({ service = null, auth = null, logger = console } = {}) {
+  return async function handleSettings(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'PUT') {
+      res.setHeader('Allow', 'GET, HEAD, PUT');
+      return sendJson(req, res, 405, { error: 'Method not allowed' });
+    }
+    const denied = checkAuth(auth, req);
+    if (denied) {
+      if (denied.status === 401 && denied.attempted) await sleep(300);
+      return sendJson(req, res, denied.status, denied.body);
+    }
+    if (!service) {
+      return sendJson(req, res, 503, { error: 'Lunch Flow API key not configured', message: 'Set LUNCHFLOW_API_KEY and redeploy.' });
+    }
+    try {
+      if (req.method === 'PUT') {
+        let body;
+        try {
+          body = await readJsonBody(req);
+        } catch (err) {
+          return sendJson(req, res, 400, { error: 'Bad request', message: err.message });
+        }
+        return sendJson(req, res, 200, await service.saveSettings(body));
+      }
+      return sendJson(req, res, 200, await service.getSettings());
+    } catch (err) {
+      logger.error?.(`Settings request failed: ${err && err.message ? err.message : err}`);
+      return sendJson(req, res, 500, { error: 'Settings storage failed', message: err && err.message ? err.message : String(err) });
     }
   };
 }
@@ -112,6 +178,7 @@ export function createRequestHandler({ service = null, auth = null, publicDir, l
   if (!publicDir) throw new Error('A public directory is required');
   const root = path.resolve(publicDir);
   const balances = createBalancesHandler({ service, auth, logger });
+  const settings = createSettingsHandler({ service, auth, logger });
   const health = createHealthHandler({ auth });
 
   async function serveStatic(req, res, pathname) {
@@ -168,6 +235,7 @@ export function createRequestHandler({ service = null, auth = null, publicDir, l
 
     try {
       if (url.pathname === '/api/balances') return await balances(req, res);
+      if (url.pathname === '/api/settings') return await settings(req, res);
       if (url.pathname === '/api/health') return health(req, res);
       if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'Not found' });
       return await serveStatic(req, res, url.pathname);
