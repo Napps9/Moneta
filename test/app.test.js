@@ -161,6 +161,7 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   assert.equal(sheet.balance.opening[2], sheet.balance.closing[1]);
   assert.ok(Array.isArray(sheet.transactions) && sheet.transactions.length > 0);
   assert.equal(sheet.categories.income.length, 3);
+  assert.ok(sheet.trends && typeof sheet.trends['out:groceries'].months === 'number', 'each row has a trend');
 
   const merchant = sheet.transactions.find((t) => t.category === 'groceries');
   const posted = await fetch(`${base}/api/sheet?account=101&months=3`, {

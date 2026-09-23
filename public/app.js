@@ -14,6 +14,7 @@ const screenAccountsEl = $('screen-accounts');
 const navLinks = [...document.querySelectorAll('.nav-link')];
 const pickerEl = $('account-picker');
 const periodPickerEl = $('period-picker');
+const sheetModeEl = $('sheet-mode');
 const activityHeadEl = $('activity-head');
 const sheetWrapEl = $('sheet-wrap');
 const sheetEl = $('sheet');
@@ -56,6 +57,7 @@ const PASSWORD_KEY = 'moneta.password';
 const VIEW_KEY = 'moneta.view';
 const SETTINGS_KEY = 'moneta.settings';
 const COLLAPSED_KEY = 'moneta.collapsed';
+const SHEET_MODE_KEY = 'moneta.sheetMode';
 const SHEET_MONTHS = 6;
 const MONTHS_BACK = 24;
 const TRANSFER = 'transfer';
@@ -146,6 +148,22 @@ function writeView(view) {
     /* per-browser convenience only */
   }
 }
+
+function readSheetMode() {
+  try {
+    return localStorage.getItem(SHEET_MODE_KEY) === 'change' ? 'change' : 'amounts';
+  } catch {
+    return 'amounts';
+  }
+}
+
+function writeSheetMode(mode) {
+  try {
+    localStorage.setItem(SHEET_MODE_KEY, mode);
+  } catch {
+    /* per-browser convenience only */
+  }
+}
 function readPassword() {
   try {
     return localStorage.getItem(PASSWORD_KEY) || '';
@@ -216,7 +234,8 @@ const state = {
   loading: false,
   error: null,
   gate: null, // null | { kind: 'password' | 'unconfigured', message }
-  view: readView(), // 'type' (savings / spending / credit) or 'bank' (by institution)
+  view: readView(),
+  sheetMode: readSheetMode(), // 'type' (savings / spending / credit) or 'bank' (by institution)
   settings: { persistent: null, kind: null, error: null, ...readLocalSettings() },
   editing: null, // the account open in the account editor
   migrated: false,
@@ -641,15 +660,27 @@ function cellId(id, monthIndex) {
   return `${id}|${monthIndex}`;
 }
 
-function valueCell({ value, monthIndex, month, id, cats, sign, label, clickable }) {
+function valueCell({ value, previous, monthIndex, month, id, cats, sign, label, clickable, good = null }) {
   const selected = Boolean(state.cell && state.cell.id === id && state.cell.monthIndex === monthIndex);
-  const cls = `sh-cell${month.current ? ' sh-cell--cur' : ''}${!value ? ' sh-cell--zero' : ''}${selected ? ' sh-cell--sel' : ''}`;
+  const change = state.sheetMode === 'change';
+  let text = formatCell(value);
+  let tone = '';
+  if (change) {
+    if (previous === undefined || (!value && !previous)) text = '–';
+    else {
+      const delta = Math.round(((value || 0) - (previous || 0)) * 100) / 100;
+      text = delta === 0 ? '0.00' : `${delta > 0 ? '+' : '-'}${plainNumber.format(Math.abs(delta))}`;
+      if (delta !== 0 && good) tone = (delta > 0) === (good === 'up') ? ' sh-cell--good' : ' sh-cell--bad';
+    }
+  }
+  const cls = `sh-cell${month.current ? ' sh-cell--cur' : ''}${text === '–' ? ' sh-cell--zero' : ''}${selected ? ' sh-cell--sel' : ''}${tone}`;
+  const said = change ? `${label}, ${formatMonth(month.key)}: ${text} on the month before` : `${label}, ${formatMonth(month.key)}: ${formatCell(value)}`;
   if (clickable && value) {
     return el('button', {
       class: cls,
       type: 'button',
-      text: formatCell(value),
-      'aria-label': `${label}, ${formatMonth(month.key)}: ${formatCell(value)}. Show transactions`,
+      text,
+      'aria-label': `${said}. Show transactions`,
       'aria-pressed': selected ? 'true' : 'false',
       onclick: () => {
         state.cell = selected ? null : { id, label, cats, sign, monthIndex };
@@ -657,10 +688,63 @@ function valueCell({ value, monthIndex, month, id, cats, sign, label, clickable 
       },
     });
   }
-  return el('div', { class: cls, text: formatCell(value) });
+  return el('div', { class: cls, text });
 }
 
-function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null }) {
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** A bar per month, drawn from a zero line so negative nets and balances read too. */
+function sparkline(values, months) {
+  const nums = values.map((v) => Number(v) || 0);
+  const n = nums.length;
+  const w = n * 8 - 2;
+  const h = 14;
+  const max = Math.max(0, ...nums);
+  const min = Math.min(0, ...nums);
+  const span = max - min || 1;
+  const zero = h - ((0 - min) / span) * h;
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'spark');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', String(w));
+  svg.setAttribute('height', String(h));
+  svg.setAttribute('aria-hidden', 'true');
+  nums.forEach((v, i) => {
+    const bar = document.createElementNS(SVG_NS, 'rect');
+    const height = v === 0 ? 1 : Math.max(1, (Math.abs(v) / span) * h);
+    const y = v >= 0 ? zero - height : zero;
+    bar.setAttribute('x', String(i * 8));
+    bar.setAttribute('y', String(Math.max(0, Math.min(h - 1, y))));
+    bar.setAttribute('width', '6');
+    bar.setAttribute('height', String(height));
+    bar.setAttribute('rx', '1');
+    bar.setAttribute('class', `spark-bar${months[i] && months[i].current ? ' spark-bar--cur' : ''}${v === 0 ? ' spark-bar--zero' : ''}`);
+    svg.append(bar);
+  });
+  return svg;
+}
+
+/** Sparkline plus an arrow: rising, falling or steady over the complete months, coloured by whether that is welcome. */
+function renderTrend(values, trend, good, { spark = true } = {}) {
+  const months = state.sheet.data.months;
+  const dir = trend.direction;
+  const word = dir === 'up' ? 'Rising' : dir === 'down' ? 'Falling' : dir === 'flat' ? 'Steady' : 'Too early to say';
+  const glyph = dir === 'up' ? '▲' : dir === 'down' ? '▼' : dir === 'flat' ? '→' : '·';
+  const tone = !dir || dir === 'flat' || !good ? 'flat' : dir === good ? 'good' : 'bad';
+  const bits = [dir ? `${word} over ${plural(trend.months, 'complete month')}` : `${word}: ${plural(trend.months, 'complete month')} so far`];
+  const complete = months.filter((m) => !m.current && !m.future);
+  if (trend.change != null && complete.length >= 2) {
+    const last = complete[complete.length - 1];
+    const prev = complete[complete.length - 2];
+    const sign = trend.change > 0 ? '+' : trend.change < 0 ? '-' : '';
+    const pct = trend.pct == null ? '' : ` (${Math.round(trend.pct * 100) > 0 ? '+' : ''}${Math.round(trend.pct * 100)}%)`;
+    bits.push(`${formatMonth(last.key, { short: true })} vs ${formatMonth(prev.key, { short: true })}: ${sign}${plainNumber.format(Math.abs(trend.change))}${pct}`);
+  }
+  const title = bits.join(' · ');
+  return el('span', { class: `trend trend--${tone}`, title, role: 'img', 'aria-label': title }, spark ? sparkline(values, months) : null, el('span', { class: 'trend-arrow', text: glyph }));
+}
+
+function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null, trend = id, good = null }) {
   const months = state.sheet.data.months;
   const labelChildren = [];
   if (toggle) {
@@ -680,13 +764,18 @@ function sheetRow({ id = null, label, values, cls, cats = null, sign = null, tog
       }),
     );
   }
-  labelChildren.push(el('span', { text: label }));
+  labelChildren.push(el('span', { class: 'sh-name', text: label }));
   if (note) labelChildren.push(el('span', { class: 'tag tag--none', text: note }));
+  const trendData = trend && state.sheet.data.trends ? state.sheet.data.trends[trend] : null;
+  // A row that carries a note ("tap to sort") gets the arrow only, so the name still fits.
+  if (trendData && values.some((v) => v)) labelChildren.push(renderTrend(values, trendData, good, { spark: !note }));
   return el(
     'div',
     { class: `sh-row sh-row--${cls}` },
     el('div', { class: 'sh-lbl' }, labelChildren),
-    ...values.map((value, i) => valueCell({ value, monthIndex: i, month: months[i], id, cats, sign, label, clickable: Boolean(cats) })),
+    ...values.map((value, i) =>
+      valueCell({ value, previous: i > 0 ? values[i - 1] : undefined, monthIndex: i, month: months[i], id, cats, sign, label, clickable: Boolean(cats), good }),
+    ),
   );
 }
 
@@ -705,7 +794,12 @@ function renderSheet() {
     el(
       'div',
       { class: 'sh-row sh-row--head' },
-      el('div', { class: 'sh-lbl sh-lbl--head' }, el('span', { text: 'Category' }), el('span', { class: 'sh-so-far', text: 'balance at month end' })),
+      el(
+        'div',
+        { class: 'sh-lbl sh-lbl--head' },
+        el('span', { text: 'Category' }),
+        el('span', { class: 'sh-so-far', text: state.sheetMode === 'change' ? 'change on the month before' : 'balance at month end' }),
+      ),
       ...data.months.map((month, i) => {
         const closing = data.balance.closing[i];
         return el(
@@ -718,24 +812,25 @@ function renderSheet() {
     ),
   );
 
+  // `good` says which way is welcome: income up, spending down. It colours the trend arrow and the Change view.
   rows.push(sectionRow('Income'));
-  for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in' }));
-  rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null }));
-  rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot' }));
+  for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in', good: 'up' }));
+  rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null, good: 'up' }));
+  rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot', trend: 'in:total', good: 'up' }));
 
   rows.push(sectionRow('Outgoings'));
   for (const row of data.outgoings.rows) {
     if (row.subs) {
       const open = !state.collapsed[row.id];
-      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open } }));
-      if (open) for (const sub of row.subs) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out' }));
+      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open }, good: 'down' }));
+      if (open) for (const sub of row.subs) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out', good: 'down' }));
     } else {
-      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out' }));
+      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out', good: 'down' }));
     }
   }
-  rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null }));
-  rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot' }));
-  rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net' }));
+  rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null, good: 'down' }));
+  rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot', trend: 'out:total', good: 'down' }));
+  rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net', trend: 'net', good: 'up' }));
 
   rows.push(sectionRow('Transfers'));
   rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
@@ -743,7 +838,11 @@ function renderSheet() {
 
   rows.push(sectionRow('Balance'));
   rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
-  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot', trend: 'bal:closing', good: 'up' }));
+
+  for (const button of sheetModeEl.querySelectorAll('.seg-btn')) {
+    button.setAttribute('aria-pressed', button.dataset.mode === state.sheetMode ? 'true' : 'false');
+  }
 
   sheetEl.replaceChildren(...rows);
 
@@ -1491,6 +1590,13 @@ lockBtn.addEventListener('click', () => {
   state.error = null;
   state.sheet = { key: null, data: null, loading: false, error: null };
   state.gate = { kind: 'password', message: '' };
+  render();
+});
+sheetModeEl.addEventListener('click', (event) => {
+  const button = event.target.closest('.seg-btn');
+  if (!button || button.dataset.mode === state.sheetMode) return;
+  state.sheetMode = button.dataset.mode === 'change' ? 'change' : 'amounts';
+  writeSheetMode(state.sheetMode);
   render();
 });
 viewToggleEl.addEventListener('click', (event) => {

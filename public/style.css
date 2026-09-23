@@ -746,6 +746,13 @@ a.row-name:focus-visible {
   gap: 4px 14px;
 }
 
+.activity-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
 .activity-head h2 {
   margin: 0;
   font-size: 18px;
@@ -957,6 +964,73 @@ button.sh-cell:focus-visible {
 .sh-bal--none {
   color: var(--ink-3);
   font-weight: 500;
+}
+
+/* Trend next to each row name: a bar per month and an arrow for the direction. */
+
+.sh-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trend {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--ink-3);
+}
+
+.trend--good {
+  color: var(--good-text);
+}
+
+.trend--bad {
+  color: var(--critical);
+}
+
+.trend-arrow {
+  width: 10px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+}
+
+.spark {
+  display: block;
+}
+
+.spark-bar {
+  fill: currentColor;
+  opacity: 0.6;
+}
+
+.spark-bar--cur {
+  opacity: 0.28;
+}
+
+.spark-bar--zero {
+  opacity: 0.18;
+}
+
+/* "Change" mode: each figure is the difference from the month before. */
+
+.sh-row .sh-cell.sh-cell--good {
+  color: var(--good-text);
+}
+
+.sh-row .sh-cell.sh-cell--bad {
+  color: var(--critical);
+}
+
+@media (max-width: 600px) {
+  .spark {
+    display: none;
+  }
 }
 
 .sh-row--sec {

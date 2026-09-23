@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSheet, monthRange, monthWindow, shiftMonth } from '../src/sheet.js';
+import { buildSheet, monthRange, monthWindow, shiftMonth, trendOf } from '../src/sheet.js';
 import { normalizeCategoriesConfig } from '../src/categories.js';
 import { createBalanceService } from '../src/balances.js';
 import { createActivityService } from '../src/activity.js';
@@ -58,6 +58,13 @@ test('buildSheet sums into categories and months, rolls subs up into parents, an
   assert.deepEqual(sheet.balance.opening, [1000 + 100 - 2605 - (2650 - 40 - 30 - 300 - 20), 1000 + 100 - 2605]);
   assert.equal(sheet.balance.opening[1], sheet.balance.closing[0], 'one month closes where the next opens');
 
+  assert.equal(sheet.trends['out:groceries'].months, 1, 'only August is complete');
+  assert.equal(sheet.trends['out:groceries'].direction, null, 'one complete month is not a trend');
+  assert.equal(sheet.trends['out:groceries'].latest, 40);
+  for (const id of ['in:salary', 'in:none', 'in:total', 'out:health', 'out:gym', 'out:none', 'out:total', 'net', 'tr:in', 'tr:out', 'bal:closing']) {
+    assert.ok(id in sheet.trends, `${id} has a trend`);
+  }
+
   assert.equal(sheet.transactions.length, 8, 'the October payment is outside the window');
   assert.equal(sheet.transactions[0].date, '2026-09-06', 'newest first');
   assert.equal(sheet.uncategorisedCount, 2);
@@ -82,6 +89,25 @@ test('buildSheet honours settings and leaves balances empty without a current ba
   });
   assert.deepEqual(sheet.outgoings.rows.find((r) => r.id === 'luxuries').values, [60]);
   assert.deepEqual(sheet.balance, { opening: [null], closing: [null] });
+});
+
+test('trendOf says whether a row is rising, falling or steady over the complete months', () => {
+  const months = monthWindow('2026-09', 6).map((m) => ({ ...m, current: m.key === '2026-09', future: false }));
+  const up = trendOf([100, 120, 140, 160, 180, 5], months);
+  assert.equal(up.direction, 'up');
+  assert.equal(up.months, 5, 'the current month is left out');
+  assert.equal(up.latest, 180);
+  assert.equal(up.previous, 160);
+  assert.equal(up.change, 20);
+  assert.equal(up.pct, 0.125);
+  assert.equal(trendOf([180, 160, 140, 120, 100, 999], months).direction, 'down');
+  assert.equal(trendOf([100, 102, 99, 101, 100, 0], months).direction, 'flat');
+  assert.equal(trendOf([0, 0, 0, 0, 0, 50], months).direction, null, 'nothing to say about an empty row');
+  assert.equal(trendOf([0, 0, 0, 0, 100, 0], months).direction, 'up');
+  assert.equal(trendOf([-50, -20, 10, 40, 70, 0], months).direction, 'up', 'works either side of zero');
+  assert.equal(trendOf([null, null, null, null, null, null], months).direction, null, 'no balances, no trend');
+  const short = monthWindow('2026-09', 2).map((m) => ({ ...m, current: m.key === '2026-09', future: false }));
+  assert.equal(trendOf([100, 50], short).direction, null, 'one complete month is not a trend');
 });
 
 test('a split transaction is summed into each of its parts', () => {

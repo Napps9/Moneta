@@ -48,6 +48,33 @@ function partsOf(total, base, split) {
   return parts;
 }
 
+/**
+ * Which way a row is heading across the complete months in the window. The current month is
+ * left out because it is only partly there. A least-squares slope is compared with the typical
+ * size of the values: moving more than 5% of that a month counts as rising or falling.
+ */
+export function trendOf(values, months) {
+  const complete = values.filter((_, i) => months[i] && !months[i].current && !months[i].future).map((v) => Number(v) || 0);
+  const n = complete.length;
+  const latest = n ? complete[n - 1] : null;
+  const previous = n > 1 ? complete[n - 2] : null;
+  const change = previous == null ? null : round(latest - previous);
+  const pct = previous ? round((latest - previous) / Math.abs(previous)) : null;
+  const base = { months: n, latest, previous, change, pct, rate: null, direction: null };
+  if (n < 2 || complete.every((v) => v === 0)) return base;
+  const mean = complete.reduce((a, b) => a + b, 0) / n;
+  const scale = complete.reduce((a, b) => a + Math.abs(b), 0) / n;
+  const xMean = (n - 1) / 2;
+  let num = 0;
+  let den = 0;
+  complete.forEach((v, i) => {
+    num += (i - xMean) * (v - mean);
+    den += (i - xMean) ** 2;
+  });
+  const rate = round(num / den / scale);
+  return { ...base, rate, direction: rate > 0.05 ? 'up' : rate < -0.05 ? 'down' : 'flat' };
+}
+
 export function buildSheet({
   accountId,
   transactions,
@@ -138,13 +165,35 @@ export function buildSheet({
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) || String(b.key).localeCompare(String(a.key)));
 
   const currentMonth = monthKey(today);
+  const monthsOut = months.map((month) => ({ ...month, current: month.key === currentMonth, future: month.key > currentMonth }));
+
+  // One trend per row, keyed the way the page names its rows.
+  const trends = {};
+  const trend = (id, vals) => {
+    trends[id] = trendOf(vals, monthsOut);
+  };
+  for (const row of incomeRows) trend(`in:${row.id}`, row.values);
+  trend('in:none', incomeUncategorised);
+  trend('in:total', incomeTotal);
+  for (const row of outgoingRows) {
+    trend(`out:${row.id}`, row.values);
+    if (row.subs) for (const sub of row.subs) trend(`out:${sub.id}`, sub.values);
+  }
+  trend('out:none', outgoingUncategorised);
+  trend('out:total', outgoingTotal);
+  trend('net', net);
+  trend('tr:in', transfersIn);
+  trend('tr:out', transfersOut);
+  trend('bal:closing', closing);
+
   return {
-    months: months.map((month) => ({ ...month, current: month.key === currentMonth, future: month.key > currentMonth })),
+    months: monthsOut,
     income: { rows: incomeRows, uncategorised: incomeUncategorised, total: incomeTotal },
     outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised, total: outgoingTotal },
     net,
     transfers: { in: transfersIn, out: transfersOut },
     balance: { opening, closing },
+    trends,
     transactions: inWindow,
     uncategorisedCount: inWindow.filter((txn) => txn.parts.some((part) => part.category === null)).length,
   };
