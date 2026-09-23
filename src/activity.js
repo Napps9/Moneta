@@ -192,6 +192,7 @@ export function createActivityService({
       months: window,
       categories: tree,
       settings: resolved,
+      budgets: resolved && resolved.budgets ? resolved.budgets[String(account.id)] || {} : {},
       currentBalance: account.balance ? account.balance.current : null,
       today,
       otherAccountNames: snapshot.accounts.filter((a) => String(a.id) !== String(account.id)).map((a) => a.name),

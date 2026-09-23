@@ -5,6 +5,7 @@
  *   transactions: one transaction -> category ("just this one")
  *   splits:       one transaction -> parts [{ category, amount }] when it is shared between categories
  *   categories:   categories and sub-categories added in the app, on top of categories.config.js
+ *   budgets:      per account, forecast amounts the viewer set per row, instead of the automatic ones
  *
  * Storage, in order of preference:
  *   - Redis over REST (Upstash): KV_REST_API_URL + KV_REST_API_TOKEN, or
@@ -23,9 +24,11 @@ const MAX_RULES = 2000;
 const MAX_TRANSACTIONS = 5000;
 const MAX_SPLITS = 2000;
 const MAX_PARTS = 20;
+const MAX_BUDGET_ROWS = 300;
+const BUDGET_KEY_RE = /^(in|out|tr):[a-z0-9_-]{1,64}$/;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
-export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
+export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -110,6 +113,26 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     if (parts.length === 0) continue;
     out.splits[cleanKey] = parts;
     splitCount += 1;
+  }
+
+  // Forecast amounts the viewer set, per account and row ('out:rent', 'in:salary', 'tr:out', ...).
+  let budgetAccounts = 0;
+  for (const [account, rows] of Object.entries(isPlainObject(source.budgets) ? source.budgets : {})) {
+    if (budgetAccounts >= MAX_ACCOUNTS) break;
+    const id = String(account).trim();
+    if (!id || !isPlainObject(rows)) continue;
+    const clean = {};
+    let n = 0;
+    for (const [key, value] of Object.entries(rows)) {
+      if (n >= MAX_BUDGET_ROWS) break;
+      const amount = Number(value);
+      if (!BUDGET_KEY_RE.test(key) || !Number.isFinite(amount) || amount < 0) continue;
+      clean[key] = Math.round(amount * 100) / 100;
+      n += 1;
+    }
+    if (n === 0) continue;
+    out.budgets[id] = clean;
+    budgetAccounts += 1;
   }
 
   return out;

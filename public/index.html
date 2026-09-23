@@ -61,6 +61,7 @@
           <div id="sheet" class="sheet"></div>
         </div>
         <p id="sheet-note" class="sheet-note" hidden>Transfers between your own accounts are listed but left out of income, outgoings and net. Tap any figure to see the transactions behind it.</p>
+        <p id="proj-note" class="sheet-note" hidden></p>
         <p id="sheet-tools" class="sheet-note" hidden>
           <button type="button" class="link-btn" id="empty-toggle"></button>
           <span id="sheet-tools-sep" aria-hidden="true"> · </span>
@@ -166,6 +167,22 @@
         <div class="editor-actions">
           <button type="button" class="btn btn--ghost" id="newcat-cancel">Close</button>
           <button type="submit" class="btn" id="newcat-save">Add</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="budget" class="editor" aria-labelledby="budget-title">
+      <form id="budget-form" novalidate>
+        <h2 id="budget-title">Forecast</h2>
+        <p id="budget-sub" class="editor-sub"></p>
+        <p id="budget-auto" class="editor-explain"></p>
+        <label class="field"><span>Your amount per month</span><input id="budget-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Leave blank for automatic" /></label>
+        <p id="budget-error" class="editor-error" role="alert" hidden></p>
+        <p id="budget-hint" class="editor-hint"></p>
+        <div class="editor-actions">
+          <button type="button" class="btn btn--ghost" id="budget-cancel">Cancel</button>
+          <button type="button" class="btn btn--ghost" id="budget-clear">Use automatic</button>
+          <button type="submit" class="btn" id="budget-save">Save</button>
         </div>
       </form>
     </dialog>

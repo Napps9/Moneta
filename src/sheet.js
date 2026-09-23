@@ -75,12 +75,85 @@ export function trendOf(values, months) {
   return { ...base, rate, direction: rate > 0.05 ? 'up' : rate < -0.05 ? 'down' : 'flat' };
 }
 
+export const PROJECTION_MONTHS = 3;
+
+/**
+ * The coming months if things carry on as they are. Outgoings and transfers run at the average of the
+ * complete months in view; income repeats its latest complete month (a salary repeats, it does not
+ * average); any line can be replaced by an amount the viewer set (`budgets`, keyed 'out:rent',
+ * 'in:salary', 'tr:out' and so on). Balances chain on from the balance now, first adding what is still
+ * expected before the current month ends (the forecast less what has already happened, never below zero).
+ */
+export function buildProjection({ months, income, outgoings, transfers, budgets = {}, currentBalance = null, count = PROJECTION_MONTHS }) {
+  const currentIdx = months.findIndex((m) => m.current);
+  if (currentIdx < 0) return null;
+  const complete = months.map((m, i) => (!m.current && !m.future ? i : -1)).filter((i) => i >= 0);
+  const at = (values, i) => Number(values[i]) || 0;
+  const avg = (values) => (complete.length ? round(complete.reduce((sum, i) => sum + at(values, i), 0) / complete.length) : 0);
+  const latest = (values) => (complete.length ? round(at(values, complete[complete.length - 1])) : 0);
+  const set = (key) => Object.prototype.hasOwnProperty.call(budgets, key) && Number.isFinite(Number(budgets[key]));
+  const line = (key, auto, values) => ({ key, value: set(key) ? round(Number(budgets[key])) : auto, auto, set: set(key), soFar: round(at(values, currentIdx)) });
+
+  const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, latest(row.values), row.values) }));
+  const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', latest(income.uncategorised), income.uncategorised) };
+  const outgoingRows = outgoings.rows.map((row) => {
+    if (!row.subs) return { id: row.id, label: row.label, ...line(`out:${row.id}`, avg(row.values), row.values), subs: null };
+    const subs = row.subs.map((sub) => ({ id: sub.id, label: sub.label, ...line(`out:${sub.id}`, avg(sub.values), sub.values) }));
+    const sum = round(subs.reduce((acc, sub) => acc + sub.value, 0));
+    const key = `out:${row.id}`;
+    return { id: row.id, label: row.label, key, value: set(key) ? round(Number(budgets[key])) : sum, auto: sum, set: set(key), soFar: round(at(row.values, currentIdx)), subs };
+  });
+  const outgoingUncategorised = { id: null, label: 'Uncategorised', ...line('out:none', avg(outgoings.uncategorised), outgoings.uncategorised) };
+  const transfersIn = line('tr:in', avg(transfers.in), transfers.in);
+  const transfersOut = line('tr:out', avg(transfers.out), transfers.out);
+
+  const incomeTotal = round(incomeRows.reduce((acc, row) => acc + row.value, 0) + incomeUncategorised.value);
+  const outgoingTotal = round(outgoingRows.reduce((acc, row) => acc + row.value, 0) + outgoingUncategorised.value);
+  const net = round(incomeTotal - outgoingTotal);
+  const monthly = round(net + transfersIn.value - transfersOut.value);
+
+  const remaining = (lines) => lines.reduce((acc, item) => acc + Math.max(0, item.value - item.soFar), 0);
+  const outgoingLines = outgoingRows.flatMap((row) => (row.subs && !row.set ? row.subs : [row]));
+  const rest = {
+    income: round(remaining([...incomeRows, incomeUncategorised])),
+    outgoings: round(remaining([...outgoingLines, outgoingUncategorised])),
+    transfersIn: round(remaining([transfersIn])),
+    transfersOut: round(remaining([transfersOut])),
+  };
+
+  const futureMonths = [];
+  for (let k = 1; k <= count; k += 1) futureMonths.push(monthRange(shiftMonth(months[currentIdx].key, k)));
+  const closing = futureMonths.map(() => null);
+  let currentMonthEnd = null;
+  if (currentBalance != null) {
+    currentMonthEnd = round(currentBalance + rest.income - rest.outgoings + rest.transfersIn - rest.transfersOut);
+    let balance = currentMonthEnd;
+    futureMonths.forEach((_, i) => {
+      balance = round(balance + monthly);
+      closing[i] = balance;
+    });
+  }
+
+  return {
+    months: futureMonths,
+    basis: { income: 'latest', outgoings: 'average', complete: complete.length },
+    income: { rows: incomeRows, uncategorised: incomeUncategorised, total: incomeTotal },
+    outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised, total: outgoingTotal },
+    net,
+    transfers: { in: transfersIn, out: transfersOut },
+    monthly,
+    rest,
+    balance: { now: currentBalance, currentMonthEnd, closing },
+  };
+}
+
 export function buildSheet({
   accountId,
   transactions,
   months,
   categories,
   settings = null,
+  budgets = {},
   currentBalance = null,
   today,
   otherAccountNames = [],
@@ -195,6 +268,14 @@ export function buildSheet({
     transfers: { in: transfersIn, out: transfersOut },
     balance: { opening, closing },
     trends,
+    projection: buildProjection({
+      months: monthsOut,
+      income: { rows: incomeRows, uncategorised: incomeUncategorised },
+      outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised },
+      transfers: { in: transfersIn, out: transfersOut },
+      budgets,
+      currentBalance,
+    }),
     transactions: inWindow,
     uncategorisedCount: inWindow.filter((txn) => txn.parts.some((part) => part.category === null)).length,
   };

@@ -162,6 +162,15 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   assert.ok(Array.isArray(sheet.transactions) && sheet.transactions.length > 0);
   assert.equal(sheet.categories.income.length, 3);
   assert.ok(sheet.trends && typeof sheet.trends['out:groceries'].months === 'number', 'each row has a trend');
+  assert.ok(sheet.projection && sheet.projection.months.length === 3 && typeof sheet.projection.balance.currentMonthEnd === 'number', 'a window ending now carries a projection');
+
+  const budgeted = await fetch(`${base}/api/sheet?account=101&months=3`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ settings: { budgets: { 101: { 'out:groceries': 123.45 } } } }),
+  });
+  const withBudget = (await budgeted.json()).projection.outgoings.rows.find((r) => r.id === 'groceries');
+  assert.deepEqual([withBudget.value, withBudget.set], [123.45, true]);
 
   const merchant = sheet.transactions.find((t) => t.category === 'groceries');
   const posted = await fetch(`${base}/api/sheet?account=101&months=3`, {
@@ -205,7 +214,7 @@ test('settings can be read and written when a store is configured', async () => 
   const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
   try {
     const before = await (await fetch(`${stored}/api/settings`)).json();
-    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], groups: before.groups });
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, groups: before.groups });
     assert.equal(before.groups.length, 3);
 
     const put = await fetch(`${stored}/api/settings`, {

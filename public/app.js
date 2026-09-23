@@ -38,6 +38,18 @@ const newcatError = $('newcat-error');
 const newcatHint = $('newcat-hint');
 const newcatCancel = $('newcat-cancel');
 const newcatSave = $('newcat-save');
+const projNoteEl = $('proj-note');
+const budgetEl = $('budget');
+const budgetForm = $('budget-form');
+const budgetTitle = $('budget-title');
+const budgetSub = $('budget-sub');
+const budgetAuto = $('budget-auto');
+const budgetAmount = $('budget-amount');
+const budgetError = $('budget-error');
+const budgetHint = $('budget-hint');
+const budgetCancel = $('budget-cancel');
+const budgetClear = $('budget-clear');
+const budgetSave = $('budget-save');
 const drillEl = $('drill');
 const editorEl = $('editor');
 const editorForm = $('editor-form');
@@ -83,7 +95,8 @@ const SETTINGS_KEY = 'moneta.settings';
 const COLLAPSED_KEY = 'moneta.collapsed';
 const SHEET_MODE_KEY = 'moneta.sheetMode';
 const HIDE_EMPTY_KEY = 'moneta.hideEmpty';
-const SHEET_MONTHS = 6;
+const SHEET_MONTHS = 7; // fetched: six complete months for the trends and the forecasts, plus the current one
+const SHOW_MONTHS = 3; // shown as actuals; the rest feed the trends and the projection
 const MONTHS_BACK = 24;
 const TRANSFER = 'transfer';
 
@@ -239,7 +252,7 @@ function writeCollapsed(collapsed) {
 }
 
 // Settings kept in this browser, used when the server has nowhere to store them.
-const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
+const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 function readLocalSettings() {
@@ -252,6 +265,7 @@ function readLocalSettings() {
       transactions: isObject(parsed.transactions) ? parsed.transactions : {},
       splits: isObject(parsed.splits) ? parsed.splits : {},
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
+      budgets: isObject(parsed.budgets) ? parsed.budgets : {},
     };
   } catch {
     return emptySettings();
@@ -259,13 +273,26 @@ function readLocalSettings() {
 }
 const settingsEmpty = (s) =>
   !s ||
-  Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length + Object.keys(s.splits || {}).length + (s.categories || []).length === 0;
+  Object.keys(s.accounts || {}).length +
+    Object.keys(s.rules || {}).length +
+    Object.keys(s.transactions || {}).length +
+    Object.keys(s.splits || {}).length +
+    (s.categories || []).length +
+    Object.keys(s.budgets || {}).length ===
+    0;
 function writeLocalSettings(settings) {
   try {
     if (settings && !settingsEmpty(settings)) {
       localStorage.setItem(
         SETTINGS_KEY,
-        JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions, splits: settings.splits || {}, categories: settings.categories || [] }),
+        JSON.stringify({
+          accounts: settings.accounts,
+          rules: settings.rules,
+          transactions: settings.transactions,
+          splits: settings.splits || {},
+          categories: settings.categories || [],
+          budgets: settings.budgets || {},
+        }),
       );
     } else localStorage.removeItem(SETTINGS_KEY);
   } catch {
@@ -369,6 +396,7 @@ function settingsPayload() {
     transactions: state.settings.transactions,
     splits: state.settings.splits || {},
     categories: state.settings.categories || [],
+    budgets: state.settings.budgets || {},
   };
 }
 
@@ -379,6 +407,7 @@ function cloneSettings() {
     transactions: { ...state.settings.transactions },
     splits: Object.fromEntries(Object.entries(state.settings.splits || {}).map(([k, parts]) => [k, parts.map((part) => ({ ...part }))])),
     categories: (state.settings.categories || []).map((c) => ({ ...c })),
+    budgets: Object.fromEntries(Object.entries(state.settings.budgets || {}).map(([k, rows]) => [k, { ...rows }])),
   };
 }
 
@@ -673,9 +702,9 @@ function renderPeriodPicker(selected) {
   const options = [];
   for (let back = 0; back < MONTHS_BACK; back += 1) {
     const key = shiftMonth(now, -back);
-    options.push(el('option', { value: key, text: formatWindow(key, SHEET_MONTHS), selected: key === end }));
+    options.push(el('option', { value: key, text: formatWindow(key, SHOW_MONTHS), selected: key === end }));
   }
-  if (!options.some((option) => option.value === end)) options.push(el('option', { value: end, text: formatWindow(end, SHEET_MONTHS), selected: true }));
+  if (!options.some((option) => option.value === end)) options.push(el('option', { value: end, text: formatWindow(end, SHOW_MONTHS), selected: true }));
 
   periodPickerEl.replaceChildren(
     el('a', { class: 'month-btn', href: target(shiftMonth(end, -1)), 'aria-label': 'Earlier months', text: '‹' }),
@@ -816,8 +845,54 @@ function renderTrend(values, trend, good, { spark = true } = {}) {
   return el('span', { class: `trend trend--${tone}`, title, role: 'img', 'aria-label': title }, spark ? sparkline(values, months) : null, el('span', { class: 'trend-arrow', text: glyph }));
 }
 
-function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null, trend = id, good = null }) {
-  const months = state.sheet.data.months;
+/** Index of the first month shown as actuals; earlier months in the window feed the trends and forecasts only. */
+function shownFrom() {
+  return Math.max(0, state.sheet.data.months.length - SHOW_MONTHS);
+}
+
+/**
+ * The projection cells for one row. `proj` is { line, kind } for a line the viewer can set an amount
+ * for, { value } or { values } for computed rows, or null for an empty run of cells.
+ */
+function projCells(proj, label) {
+  const p = state.sheet.data.projection;
+  const cells = [];
+  p.months.forEach((month, i) => {
+    const first = i === 0 ? ' sh-cell--pfirst' : '';
+    if (!proj) {
+      cells.push(el('div', { class: `sh-cell sh-cell--proj${first}` }));
+      return;
+    }
+    const value = proj.line ? proj.line.value : Array.isArray(proj.values) ? proj.values[i] : proj.value;
+    const text = formatCell(value);
+    const zero = text === '–' ? ' sh-cell--zero' : '';
+    if (!proj.line) {
+      cells.push(el('div', { class: `sh-cell sh-cell--proj${first}${zero}`, text }));
+      return;
+    }
+    const { line, kind } = proj;
+    cells.push(
+      el(
+        'button',
+        {
+          class: `sh-cell sh-cell--proj${first}${zero}${line.set ? ' sh-cell--set' : ''}`,
+          type: 'button',
+          'aria-label': `Forecast for ${label}, ${formatMonth(month.key)}: ${text}, ${line.set ? 'set by you' : 'automatic'}. Change it`,
+          title: line.set ? `You set this. Automatic would be ${formatCell(line.auto)}.` : kind === 'in' ? 'Its latest complete month. Tap to set your own amount.' : 'Average of the complete months in view. Tap to set your own amount.',
+          onclick: () => openBudget({ key: line.key, label, line, kind }),
+        },
+        line.set ? el('span', { class: 'sh-set-mark', text: '✎', 'aria-hidden': 'true' }) : null,
+        text,
+      ),
+    );
+  });
+  return cells;
+}
+
+function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null, trend = id, good = null, proj = null }) {
+  const data = state.sheet.data;
+  const months = data.months;
+  const first = shownFrom();
   const labelChildren = [];
   if (toggle) {
     labelChildren.push(
@@ -841,27 +916,32 @@ function sheetRow({ id = null, label, values, cls, cats = null, sign = null, tog
   const trendData = trend && state.sheet.data.trends ? state.sheet.data.trends[trend] : null;
   // A row that carries a note ("tap to sort") gets the arrow only, so the name still fits.
   if (trendData && values.some((v) => v)) labelChildren.push(renderTrend(values, trendData, good, { spark: !note }));
-  return el(
-    'div',
-    { class: `sh-row sh-row--${cls}` },
-    el('div', { class: 'sh-lbl' }, labelChildren),
-    ...values.map((value, i) =>
-      valueCell({ value, previous: i > 0 ? values[i - 1] : undefined, monthIndex: i, month: months[i], id, cats, sign, label, clickable: Boolean(cats), good }),
-    ),
-  );
+  const cells = [];
+  for (let i = first; i < months.length; i += 1) {
+    cells.push(valueCell({ value: values[i], previous: i > 0 ? values[i - 1] : undefined, monthIndex: i, month: months[i], id, cats, sign, label, clickable: Boolean(cats), good }));
+  }
+  if (data.projection) cells.push(...projCells(proj, label));
+  return el('div', { class: `sh-row sh-row--${cls}` }, el('div', { class: 'sh-lbl' }, labelChildren), ...cells);
 }
 
 function sectionRow(label) {
-  const months = state.sheet.data.months;
-  return el('div', { class: 'sh-row sh-row--sec' }, el('div', { class: 'sh-lbl', text: label }), ...months.map((month) => el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` })));
+  const data = state.sheet.data;
+  const cells = data.months.slice(shownFrom()).map((month) => el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` }));
+  if (data.projection) cells.push(...projCells(null, label));
+  return el('div', { class: 'sh-row sh-row--sec' }, el('div', { class: 'sh-lbl', text: label }), ...cells);
 }
 
 function renderSheet() {
   const data = state.sheet.data;
-  sheetEl.style.setProperty('--cols', String(data.months.length));
+  const proj = data.projection;
+  const first = shownFrom();
+  sheetEl.style.setProperty('--cols', String(data.months.length - first));
+  sheetEl.style.setProperty('--pcols', String(proj ? proj.months.length : 0));
+  sheetEl.classList.toggle('sheet--proj', Boolean(proj));
   const anyPositive = (values) => values.some((v) => v > 0);
   const rows = [];
 
+  const balanceCell = (closing) => el('span', { class: `sh-bal${closing == null ? ' sh-bal--none' : ''}`, text: closing == null ? '–' : `${closing < 0 ? '-' : ''}${plainNumber.format(Math.abs(closing))}` });
   rows.push(
     el(
       'div',
@@ -872,67 +952,115 @@ function renderSheet() {
         el('span', { text: 'Category' }),
         el('span', { class: 'sh-so-far', text: state.sheetMode === 'change' ? 'change on the month before' : 'balance at month end' }),
       ),
-      ...data.months.map((month, i) => {
-        const closing = data.balance.closing[i];
-        return el(
+      ...data.months.slice(first).map((month, i) =>
+        el(
           'div',
           { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` },
           el('span', { class: 'sh-month' }, formatMonth(month.key, { short: true }), month.current ? el('span', { class: 'sh-so-far sh-so-far--inline', text: 'so far' }) : null),
-          el('span', { class: `sh-bal${closing == null ? ' sh-bal--none' : ''}`, text: closing == null ? '–' : `${closing < 0 ? '-' : ''}${plainNumber.format(Math.abs(closing))}` }),
-        );
-      }),
+          balanceCell(data.balance.closing[first + i]),
+        ),
+      ),
+      ...(proj
+        ? proj.months.map((month, i) =>
+            el(
+              'div',
+              { class: `sh-cell sh-cell--proj${i === 0 ? ' sh-cell--pfirst' : ''}`, title: 'Projected balance at the end of the month' },
+              el('span', { class: 'sh-month' }, formatMonth(month.key, { short: true }), el('span', { class: 'sh-so-far sh-so-far--inline', text: 'forecast' })),
+              balanceCell(proj.balance.closing[i]),
+            ),
+          )
+        : []),
     ),
   );
 
-  // Rows with nothing in any month in view are hidden (per account, since each is used for different things)
-  // unless the viewer asks to see them.
+  // Projection lines by category id, so each row can find its forecast.
+  const pIncome = proj ? new Map(proj.income.rows.map((row) => [row.id, row])) : new Map();
+  const pOut = proj ? new Map(proj.outgoings.rows.map((row) => [row.id, row])) : new Map();
+  const forecastOf = (line) => (line && line.value > 0 ? line.value : 0);
+
+  // Rows with nothing in any month in view, and nothing forecast, are hidden (per account, since each
+  // is used for different things) unless the viewer asks to see them.
   const hide = state.hideEmpty;
   let hiddenRows = 0;
-  const skip = (values) => {
-    if (!hide || anyPositive(values)) return false;
+  const skip = (values, line = null) => {
+    if (!hide || anyPositive(values) || forecastOf(line) > 0) return false;
     hiddenRows += 1;
     return true;
   };
+  const lineProj = (line, kind) => (proj && line ? { line, kind } : null);
+  const valueProj = (value) => (proj ? { value } : null);
 
   // `good` says which way is welcome: income up, spending down. It colours the trend arrow and the Change view.
   rows.push(sectionRow('Income'));
   for (const row of data.income.rows) {
-    if (skip(row.values)) continue;
-    rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in', good: 'up' }));
+    const line = pIncome.get(row.id);
+    if (skip(row.values, line)) continue;
+    rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in', good: 'up', proj: lineProj(line, 'in') }));
   }
-  if (!skip(data.income.uncategorised)) {
-    rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null, good: 'up' }));
+  if (!skip(data.income.uncategorised, proj && proj.income.uncategorised)) {
+    rows.push(
+      sheetRow({
+        id: 'in:none',
+        label: 'Uncategorised',
+        values: data.income.uncategorised,
+        cls: 'cat',
+        cats: [null],
+        sign: 'in',
+        note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null,
+        good: 'up',
+        proj: lineProj(proj && proj.income.uncategorised, 'in'),
+      }),
+    );
   }
-  rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot', trend: 'in:total', good: 'up' }));
+  rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot', trend: 'in:total', good: 'up', proj: valueProj(proj && proj.income.total) }));
 
   rows.push(sectionRow('Outgoings'));
   for (const row of data.outgoings.rows) {
+    const pRow = pOut.get(row.id);
     if (row.subs) {
-      if (hide && !anyPositive(row.values)) {
+      if (hide && !anyPositive(row.values) && forecastOf(pRow) === 0) {
         hiddenRows += 1 + row.subs.length;
         continue;
       }
       const open = !state.collapsed[row.id];
-      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open }, good: 'down' }));
+      const pSubs = pRow && pRow.subs ? new Map(pRow.subs.map((sub) => [sub.id, sub])) : new Map();
+      rows.push(
+        sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open }, good: 'down', proj: lineProj(pRow, 'out') }),
+      );
       for (const sub of row.subs) {
-        if (skip(sub.values)) continue;
-        if (open) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out', good: 'down' }));
+        const line = pSubs.get(sub.id);
+        if (skip(sub.values, line)) continue;
+        if (open) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out', good: 'down', proj: lineProj(line, 'out') }));
       }
     } else {
-      if (skip(row.values)) continue;
-      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out', good: 'down' }));
+      if (skip(row.values, pRow)) continue;
+      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out', good: 'down', proj: lineProj(pRow, 'out') }));
     }
   }
-  if (!skip(data.outgoings.uncategorised)) {
-    rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null, good: 'down' }));
+  if (!skip(data.outgoings.uncategorised, proj && proj.outgoings.uncategorised)) {
+    rows.push(
+      sheetRow({
+        id: 'out:none',
+        label: 'Uncategorised',
+        values: data.outgoings.uncategorised,
+        cls: 'cat',
+        cats: [null],
+        sign: 'out',
+        note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null,
+        good: 'down',
+        proj: lineProj(proj && proj.outgoings.uncategorised, 'out'),
+      }),
+    );
   }
-  rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot', trend: 'out:total', good: 'down' }));
-  rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net', trend: 'net', good: 'up' }));
+  rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot', trend: 'out:total', good: 'down', proj: valueProj(proj && proj.outgoings.total) }));
+  rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net', trend: 'net', good: 'up', proj: valueProj(proj && proj.net) }));
 
-  if (!hide || anyPositive(data.transfers.in) || anyPositive(data.transfers.out)) {
+  const trIn = proj ? proj.transfers.in : null;
+  const trOut = proj ? proj.transfers.out : null;
+  if (!hide || anyPositive(data.transfers.in) || anyPositive(data.transfers.out) || forecastOf(trIn) > 0 || forecastOf(trOut) > 0) {
     rows.push(sectionRow('Transfers'));
-    if (!skip(data.transfers.in)) rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
-    if (!skip(data.transfers.out)) rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
+    if (!skip(data.transfers.in, trIn)) rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in', proj: lineProj(trIn, 'tr') }));
+    if (!skip(data.transfers.out, trOut)) rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out', proj: lineProj(trOut, 'tr') }));
   } else hiddenRows += 2;
 
   emptyToggle.textContent = hide ? `Show ${plural(hiddenRows, 'unused row')}` : 'Hide unused rows';
@@ -940,24 +1068,47 @@ function renderSheet() {
   sheetToolsSep.hidden = emptyToggle.hidden;
 
   rows.push(sectionRow('Balance'));
-  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
-  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot', trend: 'bal:closing', good: 'up' }));
+  rows.push(
+    sheetRow({
+      label: 'Opening balance',
+      values: data.balance.opening,
+      cls: 'tot',
+      proj: proj ? { values: [proj.balance.currentMonthEnd, ...proj.balance.closing.slice(0, -1)] } : null,
+    }),
+  );
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot', trend: 'bal:closing', good: 'up', proj: proj ? { values: proj.balance.closing } : null }));
 
   for (const button of sheetModeEl.querySelectorAll('.seg-btn')) {
     button.setAttribute('aria-pressed', button.dataset.mode === state.sheetMode ? 'true' : 'false');
   }
 
+  if (proj) {
+    const current = data.months.find((m) => m.current);
+    const bits = [
+      `Projections: outgoings and transfers at the average of the last ${plural(proj.basis.complete, 'complete month')}, income at its latest month. Tap a forecast to set your own amount.`,
+    ];
+    if (proj.balance.currentMonthEnd != null && current) {
+      bits.push(`Balance now ${formatMoney(proj.balance.now, data.currency)}, expected ${formatMoney(proj.balance.currentMonthEnd, data.currency)} by the end of ${formatMonth(current.key)} once what is still due this month has gone through.`);
+    }
+    projNoteEl.textContent = bits.join(' ');
+  }
+  projNoteEl.hidden = !proj;
+
   sheetEl.replaceChildren(...rows);
 
-  // On narrow screens only a couple of months fit: start at the latest one, and stay put on later re-renders.
+  // On narrow screens only a couple of months fit: start with the current month in view (the forecasts
+  // follow it to the right), and stay put on later re-renders.
   if (state.sheet.key !== scrolledSheet) {
     scrolledSheet = state.sheet.key;
-    sheetWrapEl.scrollLeft = sheetWrapEl.scrollWidth;
+    const current = sheetEl.querySelector('.sh-row--head .sh-cell--cur');
+    const label = sheetEl.querySelector('.sh-row--head .sh-lbl');
+    sheetWrapEl.scrollLeft = current && label ? Math.max(0, current.offsetLeft - label.offsetWidth) : sheetWrapEl.scrollWidth;
   }
 }
 
 function renderSheetSkeleton() {
-  sheetEl.style.setProperty('--cols', String(SHEET_MONTHS));
+  sheetEl.style.setProperty('--cols', String(SHOW_MONTHS));
+  sheetEl.classList.remove('sheet--proj');
   const rows = [];
   for (let r = 0; r < 12; r += 1) {
     rows.push(
@@ -965,7 +1116,7 @@ function renderSheetSkeleton() {
         'div',
         { class: `sh-row ${r === 0 ? 'sh-row--head' : 'sh-row--cat'}`, 'aria-hidden': 'true' },
         el('div', { class: 'sh-lbl' }, el('span', { class: 'skeleton', text: 'Category name' })),
-        ...Array.from({ length: SHEET_MONTHS }, () => el('div', { class: 'sh-cell' }, el('span', { class: 'skeleton', text: '0,000.00' }))),
+        ...Array.from({ length: SHOW_MONTHS }, () => el('div', { class: 'sh-cell' }, el('span', { class: 'skeleton', text: '0,000.00' }))),
       ),
     );
   }
@@ -1121,6 +1272,7 @@ function renderAccountsScreen() {
   renderPeriodPicker(account);
   sheetNoteEl.hidden = true;
   sheetToolsEl.hidden = true;
+  projNoteEl.hidden = true;
 
   if (!state.data) {
     renderActivityHead(null);
@@ -1714,6 +1866,76 @@ emptyToggle.addEventListener('click', () => {
   render();
 });
 
+// ---------- forecasts: your own amount instead of the automatic one ----------
+
+function openBudget({ key, label, line, kind }) {
+  if (typeof budgetEl.showModal !== 'function') return;
+  const account = selectedAccount();
+  const data = state.sheet.data;
+  if (!account || !data || !data.projection) return;
+  state.budget = { key, accountId: String(account.id) };
+  const currency = data.currency;
+  const basis = kind === 'in' ? 'its latest complete month' : `the average of the last ${plural(data.projection.basis.complete, 'complete month')}`;
+  budgetTitle.textContent = `Forecast for ${label}`;
+  budgetSub.textContent = `${account.name} · per month`;
+  budgetAuto.textContent = `Automatic: ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`;
+  budgetAmount.value = line.set ? String(line.value) : '';
+  budgetClear.hidden = !line.set;
+  budgetError.hidden = true;
+  budgetError.textContent = '';
+  budgetHint.textContent = state.settings.persistent === true ? 'Saved for every device you open this page on.' : 'Saved in this browser only.';
+  budgetSave.disabled = false;
+  budgetEl.showModal();
+  budgetAmount.focus();
+}
+
+async function writeBudget(amount) {
+  const { key, accountId } = state.budget;
+  const next = cloneSettings();
+  const rows = { ...(next.budgets[accountId] || {}) };
+  if (amount == null) delete rows[key];
+  else rows[key] = amount;
+  if (Object.keys(rows).length > 0) next.budgets[accountId] = rows;
+  else delete next.budgets[accountId];
+  budgetSave.disabled = true;
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    budgetError.textContent = err && err.message ? err.message : 'Could not save.';
+    budgetError.hidden = false;
+    budgetSave.disabled = false;
+    return;
+  }
+  if (budgetEl.open) budgetEl.close();
+  ensureSheet({ force: true });
+}
+
+budgetForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!state.budget) return;
+  const raw = budgetAmount.value.trim();
+  if (raw === '') {
+    writeBudget(null);
+    return;
+  }
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) {
+    budgetError.textContent = 'Enter an amount of zero or more, or leave it blank for automatic.';
+    budgetError.hidden = false;
+    return;
+  }
+  writeBudget(Math.round(amount * 100) / 100);
+});
+budgetClear.addEventListener('click', () => {
+  if (state.budget) writeBudget(null);
+});
+budgetCancel.addEventListener('click', () => {
+  if (budgetEl.open) budgetEl.close();
+});
+budgetEl.addEventListener('close', () => {
+  state.budget = null;
+});
+
 // ---------- notices, header, gate ----------
 
 function renderNotice() {
@@ -1898,11 +2120,20 @@ async function saveSettings(next) {
       transactions: body.transactions || {},
       splits: body.splits || {},
       categories: body.categories || [],
+      budgets: body.budgets || {},
     };
     return;
   }
   writeLocalSettings(next);
-  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions, splits: next.splits || {}, categories: next.categories || [] };
+  state.settings = {
+    ...state.settings,
+    accounts: next.accounts,
+    rules: next.rules,
+    transactions: next.transactions,
+    splits: next.splits || {},
+    categories: next.categories || [],
+    budgets: next.budgets || {},
+  };
 }
 
 async function submitEditor(event) {
@@ -1988,6 +2219,7 @@ function adoptServerSettings(settings) {
     transactions: settings.transactions || {},
     splits: settings.splits || {},
     categories: settings.categories || [],
+    budgets: settings.budgets || {},
   };
 }
 
@@ -2011,7 +2243,7 @@ async function load({ refresh = false } = {}) {
         // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
         if (!state.migrated && !settingsEmpty(local) && serverEmpty) {
           state.migrated = true;
-          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
+          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
           try {
             await saveSettings(local);
             writeLocalSettings(null);

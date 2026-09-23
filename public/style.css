@@ -847,6 +847,44 @@ a.row-name:focus-visible {
   border-top: 0;
 }
 
+/* Projections: a second table to the right, kept in the same grid so rows line up. */
+
+.sheet--proj .sh-row {
+  grid-template-columns: 230px repeat(var(--cols), minmax(104px, 1fr)) repeat(var(--pcols), minmax(104px, 1fr));
+}
+
+.sh-cell--pfirst {
+  border-left: 3px double var(--rule);
+}
+
+.sh-cell--proj {
+  color: var(--ink-2);
+}
+
+.sh-row--head .sh-cell--proj {
+  color: var(--ink-2);
+}
+
+.sh-row--head .sh-cell--proj .sh-bal {
+  color: var(--ink);
+}
+
+.sh-row .sh-cell--set {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.sh-set-mark {
+  display: inline-block;
+  margin-right: 3px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+
+.btn--ghost[hidden] {
+  display: none;
+}
+
 .sh-lbl {
   position: sticky;
   left: 0;
@@ -1133,6 +1171,10 @@ button.sh-cell:focus-visible {
 @media (max-width: 600px) {
   .sh-row {
     grid-template-columns: 150px repeat(var(--cols), minmax(96px, 1fr));
+  }
+
+  .sheet--proj .sh-row {
+    grid-template-columns: 150px repeat(var(--cols), minmax(96px, 1fr)) repeat(var(--pcols), minmax(96px, 1fr));
   }
 
   .sh-row--sub .sh-lbl {

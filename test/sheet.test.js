@@ -94,6 +94,46 @@ test('buildSheet honours settings and leaves balances empty without a current ba
   assert.deepEqual(sheet.balance, { opening: [null], closing: [null] });
 });
 
+test('the projection runs outgoings at their average, income at its latest month, and chains balances', () => {
+  const months = monthWindow('2026-09', 4); // June, July, August complete; September current
+  const transactions = [
+    tx('2026-06-05', -100, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-07-05', -200, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-08-05', -300, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-09-05', -50, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-06-25', 2000, 'ACME LTD SALARY'),
+    tx('2026-07-25', 2000, 'ACME LTD SALARY'),
+    tx('2026-08-25', 2600, 'ACME LTD SALARY'),
+    tx('2026-08-15', -300, 'POT TRANSFER TO SAVINGS POT'),
+    tx('2026-07-10', -60, 'PUREGYM', { merchant: 'PureGym' }),
+  ];
+  const build = (budgets) =>
+    buildSheet({ accountId: 1, transactions, months, categories: config, settings: { rules: {}, transactions: {}, splits: {} }, budgets, currentBalance: 1000, today: '2026-09-22' });
+  const p = build({}).projection;
+  assert.deepEqual(p.months.map((m) => m.key), ['2026-10', '2026-11', '2026-12']);
+  assert.equal(p.basis.complete, 3);
+  const row = (rows, id) => rows.find((r) => r.id === id);
+  assert.deepEqual([row(p.outgoings.rows, 'groceries').value, row(p.outgoings.rows, 'groceries').set, row(p.outgoings.rows, 'groceries').soFar], [200, false, 50], 'average of the complete months');
+  assert.equal(row(row(p.outgoings.rows, 'health').subs, 'gym').value, 20);
+  assert.equal(row(p.outgoings.rows, 'health').value, 20, 'a group is the sum of its subs');
+  assert.equal(row(p.income.rows, 'salary').value, 2600, 'income repeats its latest complete month');
+  assert.equal(p.transfers.out.value, 100);
+  assert.deepEqual([p.income.total, p.outgoings.total, p.net, p.monthly], [2600, 220, 2380, 2280]);
+  assert.equal(p.balance.now, 1000);
+  assert.equal(p.balance.currentMonthEnd, 1000 + 2600 - 150 - 20 - 100, 'what is still expected this month: the salary, the rest of the groceries, the gym, the transfer');
+  assert.deepEqual(p.balance.closing, [3330 + 2280, 3330 + 2280 * 2, 3330 + 2280 * 3]);
+
+  const q = build({ 'out:groceries': 180, 'in:salary': 3000, 'out:health': 0 }).projection;
+  assert.deepEqual([row(q.outgoings.rows, 'groceries').value, row(q.outgoings.rows, 'groceries').set, row(q.outgoings.rows, 'groceries').auto], [180, true, 200]);
+  assert.equal(row(q.income.rows, 'salary').value, 3000);
+  assert.equal(row(q.outgoings.rows, 'health').value, 0, 'a group can be set as a whole');
+  assert.equal(q.outgoings.total, 180);
+  assert.equal(q.balance.currentMonthEnd, 1000 + 3000 - 130 - 100);
+
+  const past = buildSheet({ accountId: 1, transactions, months: monthWindow('2026-08', 3), categories: config, currentBalance: 1000, today: '2026-09-22' });
+  assert.equal(past.projection, null, 'nothing to project from a window that ended in the past');
+});
+
 test('trendOf says whether a row is rising, falling or steady over the complete months', () => {
   const months = monthWindow('2026-09', 6).map((m) => ({ ...m, current: m.key === '2026-09', future: false }));
   const up = trendOf([100, 120, 140, 160, 180, 5], months);
