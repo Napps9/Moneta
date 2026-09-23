@@ -8,8 +8,8 @@ import { createFileStore } from '../src/settings.js';
 
 const silent = { warn() {}, error() {} };
 
-function fakeClient({ accounts, balances, failures = {} }) {
-  const calls = { listAccounts: 0, getBalance: [] };
+function fakeClient({ accounts, balances, failures = {}, transactions = {} }) {
+  const calls = { listAccounts: 0, getBalance: [], listTransactions: [] };
   return {
     calls,
     async listAccounts() {
@@ -20,6 +20,11 @@ function fakeClient({ accounts, balances, failures = {} }) {
       calls.getBalance.push(id);
       if (failures[id]) throw new Error(failures[id]);
       return balances[id];
+    },
+    async listTransactions(id, { from, to }) {
+      calls.listTransactions.push({ id, from, to });
+      if (failures[`transactions:${id}`]) throw new Error(failures[`transactions:${id}`]);
+      return (transactions[id] || []).filter((t) => t.date >= from && t.date <= to);
     },
   };
 }
@@ -90,6 +95,50 @@ test('applyTreatment reads the reported number three ways', () => {
   assert.equal(applyTreatment({ id: 2, balance: null, error: 'x' }, { balance: 'negate' }).balance, null);
 });
 
+test('a balance the viewer set stands in for Lunch Flow’s, plus the transactions dated after that day', async () => {
+  const now = () => Date.parse('2026-09-25T12:00:00Z');
+  const client = fakeClient({
+    accounts: ACCOUNTS,
+    balances: {
+      1: { current: 100, available: 90, currency: 'EUR' },
+      2: { current: 50, available: 50, currency: 'EUR' },
+    },
+    failures: { 3: 'no balance today', 'transactions:3': 'no transactions either' },
+    transactions: {
+      1: [
+        { date: '2026-09-23', amount: -99 },
+        { date: '2026-09-24', amount: -10.25 },
+        { date: '2026-09-25', amount: 4 },
+      ],
+    },
+  });
+  const service = createBalanceService({ client, now, ttlMs: 1000, logger: silent });
+  const settings = { accounts: { 1: { anchor: { amount: 612.31, date: '2026-09-23' } }, 3: { anchor: { amount: -20, date: '2026-09-01' }, balance: 'negate' } } };
+
+  const snapshot = await service.getSnapshot({ settings });
+  const current = snapshot.accounts.find((a) => a.id === 1);
+  assert.equal(current.balance.current, 606.06, 'the set amount plus what happened after that day, not on it');
+  assert.equal(current.balance.reported, 100, 'Lunch Flow’s own figure is kept alongside');
+  assert.equal(current.balance.available, null);
+  assert.deepEqual(current.balance.anchor, { amount: 612.31, date: '2026-09-23', since: -6.25, count: 2, error: null });
+  assert.deepEqual(current.settings.anchor, { amount: 612.31, date: '2026-09-23' });
+  assert.deepEqual(client.calls.listTransactions, [
+    { id: 1, from: '2026-09-24', to: '2026-09-25' },
+    { id: 3, from: '2026-09-02', to: '2026-09-25' },
+  ]);
+
+  const card = snapshot.accounts.find((a) => a.id === 3);
+  assert.equal(card.balance.current, 20, 'with no balance from Lunch Flow the set amount still gives one, and treatments still apply');
+  assert.equal(card.balance.reported, null);
+  assert.equal(card.balance.anchor.error, 'no transactions either');
+  assert.equal(card.error, 'no balance today');
+
+  await service.getSnapshot({ settings });
+  assert.equal(client.calls.listTransactions.length, 2, 'what happened since is cached like the balances');
+  await service.getSnapshot({ settings, refresh: true });
+  assert.equal(client.calls.listTransactions.length, 4, 'and refetched on a refresh');
+});
+
 test('settings sent with the request are applied when the store is not persistent', async () => {
   const client = fakeClient({
     accounts: ACCOUNTS,
@@ -113,7 +162,7 @@ test('settings sent with the request are applied when the store is not persisten
   const current = tuned.accounts.find((a) => a.id === 1);
   assert.equal(current.group, 'savings');
   assert.equal(current.autoGroup, 'spending');
-  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null, pinned: null });
+  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null, pinned: null, anchor: null });
   assert.equal(current.pinned, null);
   const card = tuned.accounts.find((a) => a.id === 3);
   assert.equal(card.balance.current, -3619.58);

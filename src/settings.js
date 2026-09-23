@@ -29,6 +29,7 @@ const MAX_BUDGET_ROWS = 300;
 const MAX_BUDGET_MONTHS = 36;
 const BUDGET_KEY_RE = /^(in|out|tr):[a-z0-9_-]{1,64}$/;
 const BUDGET_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
 export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
@@ -89,6 +90,13 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
 
     if (value.pinned === true) entry.pinned = 1;
     else if (typeof value.pinned === 'number' && Number.isFinite(value.pinned) && value.pinned > 0) entry.pinned = Math.floor(value.pinned);
+
+    // The balance as the viewer's bank showed it on a day, for when Lunch Flow's is behind.
+    if (isPlainObject(value.anchor)) {
+      const amount = Number(value.anchor.amount);
+      const date = typeof value.anchor.date === 'string' ? value.anchor.date.trim().slice(0, 10) : '';
+      if (Number.isFinite(amount) && DATE_RE.test(date)) entry.anchor = { amount: Math.round(amount * 100) / 100, date };
+    }
 
     if (Object.keys(entry).length > 0) {
       out.accounts[id] = entry;

@@ -83,6 +83,8 @@ const editorError = $('editor-error');
 const editorHint = $('editor-hint');
 const editorDetails = $('editor-details');
 const editorDl = $('editor-dl');
+const editorAnchor = $('editor-anchor');
+const editorAnchorNote = $('editor-anchor-note');
 const editorCancel = $('editor-cancel');
 const editorSave = $('editor-save');
 const catpickerEl = $('catpicker');
@@ -171,6 +173,12 @@ function formatWindow(endKey, count) {
 }
 
 const parseIso = (iso) => new Date(`${iso}T00:00:00`);
+
+/** Today's date where the viewer is, as YYYY-MM-DD. */
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 function formatDay(iso, { weekday = true } = {}) {
   const date = parseIso(iso);
@@ -575,7 +583,10 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
   } else if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
     meta.push(el('span', { text: `Available ${formatMoney(account.balance.available, account.balance.currency)}` }));
   }
-  if (account.balance && account.balance.asOf) meta.push(el('span', { text: `Synced ${relativeTime(account.balance.asOf)}`, title: new Date(account.balance.asOf).toLocaleString() }));
+  if (account.balance && account.balance.anchor) {
+    const { anchor } = account.balance;
+    meta.push(el('span', { text: `Set by you ${formatDay(anchor.date)}${account.balance.reported != null ? `, Lunch Flow says ${formatMoney(account.balance.reported, account.balance.currency)}` : ''}`, title: `${plural(anchor.count, 'transaction')} since then add up to ${formatMoney(anchor.since, account.balance.currency)}` }));
+  } else if (account.balance && account.balance.asOf) meta.push(el('span', { text: `Synced ${relativeTime(account.balance.asOf)}`, title: new Date(account.balance.asOf).toLocaleString() }));
   if (account.error) meta.push(el('span', { class: 'row-error', text: `Balance unavailable: ${account.error}` }));
 
   const amount = account.balance
@@ -761,7 +772,8 @@ function renderActivityHead(account, sheet) {
   const currency = sheet ? sheet.currency : account.currency;
   const balance = account.balance;
   const parts = [account.institutionName];
-  if (balance) parts.push(balance.asOf ? `balance as Lunch Flow last synced it, ${relativeTime(balance.asOf)}` : 'balance now');
+  if (balance && balance.anchor) parts.push(`balance as you set it on ${formatDay(balance.anchor.date)} plus what has happened since${balance.reported != null ? ` (Lunch Flow says ${formatMoney(balance.reported, balance.currency)})` : ''}`);
+  else if (balance) parts.push(balance.asOf ? `balance as Lunch Flow last synced it, ${relativeTime(balance.asOf)}` : 'balance now');
   if (balance && balance.treatment === 'credit-limit') parts.push(`${formatMoney(balance.available, balance.currency)} left of ${formatMoney(balance.limit, balance.currency)}`);
   else if (balance && balance.available != null && balance.available !== balance.current) parts.push(`available ${formatMoney(balance.available, balance.currency)}`);
   if (account.error) parts.push(`balance unavailable: ${account.error}`);
@@ -2389,6 +2401,13 @@ function openEditor(account) {
   editorGroup.value = account.settings && account.settings.group ? account.settings.group : '';
   editorBalance.value = (account.settings && account.settings.balance) || 'reported';
   editorLimit.value = account.settings && account.settings.limit != null ? String(account.settings.limit) : '';
+  const anchor = account.settings && account.settings.anchor ? account.settings.anchor : null;
+  const since = account.balance && account.balance.anchor ? account.balance.anchor : null;
+  editorAnchor.value = anchor ? String(anchor.amount) : '';
+  const currency = account.balance ? account.balance.currency : account.currency;
+  editorAnchorNote.textContent = anchor
+    ? `Set on ${formatDay(anchor.date)}. ${since ? `${plural(since.count, 'transaction')} dated after that add up to ${formatMoney(since.since, currency)}, so the balance now is ${formatMoney(anchor.amount + since.since, currency)}.` : ''}${since && since.error ? ` Transactions since could not be fetched: ${since.error}.` : ''} Lunch Flow says ${account.balance && account.balance.reported != null ? formatMoney(account.balance.reported, currency) : 'nothing'}. Clear the box to go back to Lunch Flow's figure.`
+    : 'When Lunch Flow is behind your bank, type the balance from your bank app. It stands in for Lunch Flow’s figure, and every transaction dated after today is added to it as it arrives. Everything on the sheet works from it.';
   editorError.hidden = true;
   editorError.textContent = '';
   editorHint.textContent =
@@ -2464,6 +2483,20 @@ async function submitEditor(event) {
     }
     entry.balance = 'credit-limit';
     entry.limit = limit;
+  }
+  // The balance as the bank shows it, kept with the day it was set; the same amount saved again keeps its day.
+  const previous = entry.anchor || null;
+  delete entry.anchor;
+  if (editorAnchor.value.trim() !== '') {
+    const amount = Math.round(Number(editorAnchor.value) * 100) / 100;
+    if (!Number.isFinite(amount)) {
+      editorAnchor.setAttribute('aria-invalid', 'true');
+      editorError.textContent = 'Enter the balance as a number, or leave it blank to use Lunch Flow’s figure.';
+      editorError.hidden = false;
+      editorAnchor.focus();
+      return;
+    }
+    entry.anchor = previous && previous.amount === amount ? previous : { amount, date: localToday() };
   }
   if (Object.keys(entry).length > 0) next.accounts[id] = entry;
   else delete next.accounts[id];

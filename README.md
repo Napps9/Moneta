@@ -49,6 +49,8 @@ Pin an account with the star on its chip to keep it at the front of the list. Ac
 
 For a finished month the closing balance is derived: the current balance minus everything that happened after that month (which is why transactions are fetched up to today). For the current month it is simply the balance now. Positive transaction amounts count as money in, negative as money out, pending ones included.
 
+When Lunch Flow's balance is behind your bank, open the account with its pencil on the Balances screen and type **Balance now, as your bank shows it**. That amount stands in for Lunch Flow's from that day on: every transaction dated after the day you set it is added as it arrives, so the balance keeps moving without you touching it again, and the sheet's month-ends and forecasts all work from it. The row says "Set by you" with Lunch Flow's own figure beside it, so you can see when Lunch Flow has caught up; clear the box to go back to its figure. Saving the same amount again keeps the original day.
+
 ## Categories
 
 Every transaction on the Accounts screen lands in a category. Income has Salary, Loan Repayments and Misc Income. Outgoings has Groceries plus the larger categories Luxuries, Living, Health, Transport, Money and Misc, each with sub-categories (Food Out, Rent, Gym, Haircut, Fuel, Credit Card, Loaned Out, Investments, Phone and so on). A parent row is the sum of its sub-categories and collapses with the arrow next to its name.

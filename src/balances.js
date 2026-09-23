@@ -73,21 +73,32 @@ export function computeTotals(accounts) {
  *   credit-limit  the number is what is left to spend on a card; owed = limit - reported
  */
 export function applyTreatment(account, setting = {}) {
-  if (!account.balance) return account;
-  const { current, available, currency, asOf, details } = account.balance;
+  // A balance the viewer set themselves stands in for Lunch Flow's, plus what has happened since
+  // (account.sinceAnchor, worked out by the service from the transactions after that day).
+  const anchored = setting.anchor && account.sinceAnchor && account.sinceAnchor.date === setting.anchor.date ? account.sinceAnchor : null;
+  if (!account.balance && !anchored) return account;
+  const reported = account.balance ? account.balance.current : null;
+  const currency = (account.balance && account.balance.currency) || account.currency || null;
+  const { asOf = null, details = null } = account.balance || {};
+  const current = anchored ? Math.round((setting.anchor.amount + anchored.net) * 100) / 100 : reported;
+  const available = anchored ? null : account.balance.available;
   const mode = setting.balance ?? 'reported';
-  const stamp = { ...(asOf ? { asOf } : {}), ...(details ? { details } : {}) };
+  const extra = {
+    ...(asOf ? { asOf } : {}),
+    ...(details ? { details } : {}),
+    ...(anchored ? { anchor: { amount: setting.anchor.amount, date: setting.anchor.date, since: anchored.net, count: anchored.count, error: anchored.error || null } } : {}),
+  };
 
   if (mode === 'negate') {
-    return { ...account, balance: { current: -current, available, currency, treatment: mode, reported: current, ...stamp } };
+    return { ...account, balance: { current: -current, available, currency, treatment: mode, reported, ...extra } };
   }
   if (mode === 'credit-limit' && Number.isFinite(setting.limit)) {
     return {
       ...account,
-      balance: { current: -(setting.limit - current), available: current, currency, treatment: mode, limit: setting.limit, reported: current, ...stamp },
+      balance: { current: -(setting.limit - current), available: current, currency, treatment: mode, limit: setting.limit, reported, ...extra },
     };
   }
-  return { ...account, balance: { current, available, currency, treatment: 'reported', reported: current, ...stamp } };
+  return { ...account, balance: { current, available, currency, treatment: 'reported', reported, ...extra } };
 }
 
 /** Apply grouping, treatments and totals to raw fetched accounts. */
@@ -102,7 +113,7 @@ export function assembleSnapshot(raw, groupsConfig, settings = emptySettings()) 
       group,
       autoGroup,
       pinned: setting.pinned ?? null,
-      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null, pinned: setting.pinned ?? null },
+      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null, pinned: setting.pinned ?? null, anchor: setting.anchor ?? null },
     };
   });
   const groups = groupsConfig.groups.map((group) => {
@@ -210,10 +221,44 @@ export function createBalanceService({
     forecast: resolved.settings.forecast,
   });
 
+  // What has happened since a balance the viewer set: the net of the transactions dated after that
+  // day, cached per account and day for as long as balances are.
+  const sinceCache = new Map();
+  const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const dayAfter = (date) => isoDate(Date.parse(`${date}T12:00:00Z`) + 24 * 60 * 60 * 1000);
+  async function sinceAnchor(account, anchor, refresh) {
+    const key = `${account.id}|${anchor.date}`;
+    const hit = sinceCache.get(key);
+    if (!refresh && hit && hit.expiresAt > now()) return hit.value;
+    const from = dayAfter(anchor.date);
+    const to = isoDate(now());
+    let value;
+    if (from > to || typeof client.listTransactions !== 'function') value = { date: anchor.date, net: 0, count: 0 };
+    else {
+      try {
+        const transactions = await client.listTransactions(account.id, { from, to, includePending: true });
+        const amounts = transactions.map((t) => Number(t.amount)).filter((n) => Number.isFinite(n));
+        value = { date: anchor.date, net: Math.round(amounts.reduce((sum, n) => sum + n, 0) * 100) / 100, count: amounts.length };
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        logger.warn?.(`Could not fetch transactions since ${anchor.date} for account ${account.id}: ${message}`);
+        value = { date: anchor.date, net: 0, count: 0, error: message };
+      }
+    }
+    sinceCache.set(key, { value, expiresAt: now() + ttlMs });
+    return value;
+  }
+
   async function getSnapshot({ refresh = false, settings: sent = null } = {}) {
     const [{ raw, cached, stale, error }, resolved] = await Promise.all([getRaw({ refresh }), resolveSettings(sent)]);
+    const anchored = await Promise.all(
+      raw.accounts.map(async (account) => {
+        const setting = resolved.settings.accounts[String(account.id)];
+        return setting && setting.anchor ? { ...account, sinceAnchor: await sinceAnchor(account, setting.anchor, refresh) } : account;
+      }),
+    );
     return {
-      ...assembleSnapshot(raw, groupsConfig, resolved.settings),
+      ...assembleSnapshot({ ...raw, accounts: anchored }, groupsConfig, resolved.settings),
       cached,
       stale,
       error,

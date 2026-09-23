@@ -27,6 +27,9 @@ test('normalizeSettings keeps valid entries and drops the rest', () => {
         5: { balance: 'sideways' },
         6: 'not an object',
         ' ': { group: 'savings' },
+        7: { anchor: { amount: '612.309', date: '2026-09-23' } },
+        8: { anchor: { amount: 1, date: '23/09/2026' } },
+        9: { anchor: { amount: 'lots', date: '2026-09-23' } },
       },
     },
     config,
@@ -36,6 +39,7 @@ test('normalizeSettings keeps valid entries and drops the rest', () => {
     accounts: {
       1: { group: 'credit', balance: 'credit-limit', limit: 5000 },
       3: { balance: 'negate' },
+      7: { anchor: { amount: 612.31, date: '2026-09-23' } },
     },
     rules: {},
     transactions: {},
