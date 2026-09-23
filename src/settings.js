@@ -26,7 +26,9 @@ const MAX_TRANSACTIONS = 5000;
 const MAX_SPLITS = 2000;
 const MAX_PARTS = 20;
 const MAX_BUDGET_ROWS = 300;
+const MAX_BUDGET_MONTHS = 36;
 const BUDGET_KEY_RE = /^(in|out|tr):[a-z0-9_-]{1,64}$/;
+const BUDGET_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
 export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
@@ -116,7 +118,27 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     splitCount += 1;
   }
 
-  // Forecast amounts the viewer set, per account and row ('out:rent', 'in:salary', 'tr:out', ...).
+  // Forecast amounts the viewer set, per account and row ('out:rent', 'in:salary', 'tr:out', ...): a flat
+  // amount for every month, or { each, months: { 'YYYY-MM': amount } } when some months differ.
+  const money = (value) => {
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) / 100 : null;
+  };
+  const cleanBudget = (value) => {
+    if (!isPlainObject(value)) return money(value);
+    const each = value.each == null || value.each === '' ? null : money(value.each);
+    const months = {};
+    let n = 0;
+    for (const [monthKey, amount] of Object.entries(isPlainObject(value.months) ? value.months : {})) {
+      if (n >= MAX_BUDGET_MONTHS) break;
+      const clean = money(amount);
+      if (!BUDGET_MONTH_RE.test(monthKey) || clean == null) continue;
+      months[monthKey] = clean;
+      n += 1;
+    }
+    if (n === 0) return each;
+    return each == null ? { months } : { each, months };
+  };
   let budgetAccounts = 0;
   for (const [account, rows] of Object.entries(isPlainObject(source.budgets) ? source.budgets : {})) {
     if (budgetAccounts >= MAX_ACCOUNTS) break;
@@ -126,9 +148,10 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     let n = 0;
     for (const [key, value] of Object.entries(rows)) {
       if (n >= MAX_BUDGET_ROWS) break;
-      const amount = Number(value);
-      if (!BUDGET_KEY_RE.test(key) || !Number.isFinite(amount) || amount < 0) continue;
-      clean[key] = Math.round(amount * 100) / 100;
+      if (!BUDGET_KEY_RE.test(key)) continue;
+      const budget = cleanBudget(value);
+      if (budget == null) continue;
+      clean[key] = budget;
       n += 1;
     }
     if (n === 0) continue;

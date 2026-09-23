@@ -182,7 +182,12 @@
         <h2 id="budget-title">Forecast</h2>
         <p id="budget-sub" class="editor-sub"></p>
         <p id="budget-auto" class="editor-explain"></p>
-        <label class="field"><span>Your amount per month</span><input id="budget-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Leave blank for automatic" /></label>
+        <fieldset class="scope" id="budget-scope">
+          <legend class="sr-only">Apply to</legend>
+          <label class="radio"><input type="radio" name="budget-scope" value="each" id="budget-each" /><span>Every month</span></label>
+          <label class="radio"><input type="radio" name="budget-scope" value="month" id="budget-month" /><span id="budget-month-label">This month only</span></label>
+        </fieldset>
+        <label class="field"><span>Your amount</span><input id="budget-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Leave blank for automatic" /></label>
         <p id="budget-error" class="editor-error" role="alert" hidden></p>
         <p id="budget-hint" class="editor-hint"></p>
         <div class="editor-actions">

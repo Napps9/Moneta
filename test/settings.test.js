@@ -68,13 +68,39 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
         'id:11': 'not a list',
         'id:12': [{ category: 'health', amount: 10 }],
       },
-      budgets: { 101: { 'out:groceries': '250.555', 'in:salary': 3000, 'bad key': 5, 'out:x': -1, 'tr:out': 'nope' }, ' ': { 'out:a': 1 }, 102: 'nope', 103: { 'out:a': 'x' } },
+      budgets: {
+        101: {
+          'out:groceries': '250.555',
+          'in:salary': 3000,
+          'bad key': 5,
+          'out:x': -1,
+          'tr:out': 'nope',
+          'in:loanrepay': { each: 0, months: { '2026-10': 500, nope: 1, '2026-11': -5, '2026-12': '250.004' } },
+          'out:rent': { months: {} },
+          'out:water': { each: null, months: { '2026-10': 10 } },
+          'out:energy': { each: '', months: { '2026-10': 'x' } },
+        },
+        ' ': { 'out:a': 1 },
+        102: 'nope',
+        103: { 'out:a': 'x' },
+      },
       forecast: { 101: 'budget', 102: 'auto', '': 'budget', 104: true },
     },
     config,
     categories,
   );
-  assert.deepEqual(settings.budgets, { 101: { 'out:groceries': 250.56, 'in:salary': 3000 } }, 'budgets need a row key and an amount of zero or more');
+  assert.deepEqual(
+    settings.budgets,
+    {
+      101: {
+        'out:groceries': 250.56,
+        'in:salary': 3000,
+        'in:loanrepay': { each: 0, months: { '2026-10': 500, '2026-12': 250 } },
+        'out:water': { months: { '2026-10': 10 } },
+      },
+    },
+    'budgets need a row key and an amount of zero or more, flat or by month',
+  );
   assert.deepEqual(settings.forecast, { 101: 'budget' }, 'only budget mode is stored; auto is the default');
   assert.deepEqual(settings.accounts, { 1: { pinned: 1700000000000 }, 2: { pinned: 1 } });
   assert.deepEqual(settings.rules, { tesco: 'groceries', puregym: 'gym', pot: 'transfer', nursery: 'u-nursery' }, 'unknown categories and parents are dropped; app-made categories count');

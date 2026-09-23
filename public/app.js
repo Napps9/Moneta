@@ -46,6 +46,9 @@ const budgetTitle = $('budget-title');
 const budgetSub = $('budget-sub');
 const budgetAuto = $('budget-auto');
 const budgetAmount = $('budget-amount');
+const budgetEach = $('budget-each');
+const budgetMonth = $('budget-month');
+const budgetMonthLabel = $('budget-month-label');
 const budgetError = $('budget-error');
 const budgetHint = $('budget-hint');
 const budgetCancel = $('budget-cancel');
@@ -899,10 +902,16 @@ function forecastColumns() {
   if (!proj) return [];
   const { currentShown, futureCount } = viewLayout();
   const columns = [];
-  if (currentShown) columns.push({ key: data.months[data.months.length - 1].key, closing: proj.balance.currentMonthEnd, current: true });
-  proj.months.slice(0, futureCount).forEach((month, i) => columns.push({ key: month.key, closing: proj.balance.closing[i], current: false }));
+  if (currentShown) columns.push({ key: data.months[data.months.length - 1].key, closing: proj.balance.currentMonthEnd, current: true, index: -1 });
+  proj.months.slice(0, futureCount).forEach((month, i) => columns.push({ key: month.key, closing: proj.balance.closing[i], current: false, index: i }));
   return columns;
 }
+
+/** A forecast line's figure for one forecast column: the current month's, or the month ahead's. */
+const lineAt = (line, column) => (column.current ? line.value : line.values[column.index]);
+
+/** The figures of a { now, months } total laid along the forecast columns in view. */
+const totalAlong = (total) => forecastColumns().map((column) => (column.current ? total.now : total.months[column.index]));
 
 /**
  * The forecast cells for one row. `proj` is { line, kind } for a line the viewer can set an amount
@@ -913,29 +922,30 @@ function projCells(proj, label) {
   return forecastColumns().map((column, c) => {
     const first = c === 0 ? ' sh-cell--pfirst' : '';
     if (!proj) return el('div', { class: `sh-cell sh-cell--proj${first}` });
-    const value = proj.line ? proj.line.value : Array.isArray(proj.values) ? proj.values[c] : proj.value;
+    const value = proj.line ? lineAt(proj.line, column) : Array.isArray(proj.values) ? proj.values[c] : proj.value;
     const text = formatCell(value);
     const zero = text === '–' ? ' sh-cell--zero' : '';
     if (!proj.line) return el('div', { class: `sh-cell sh-cell--proj${first}${zero}`, text });
     const { line, kind } = proj;
-    const how = line.set ? 'set by you' : budgetOnly ? 'not set' : 'automatic';
-    const hint = line.set
-      ? `You set this. Automatic would be ${formatCell(line.auto)}.`
+    const setHere = line.setMonths ? line.setMonths[column.key] : line.set ? 'each' : null;
+    const how = setHere === 'month' ? 'set by you for this month' : setHere ? 'set by you for every month' : budgetOnly ? 'not set' : 'automatic';
+    const hint = setHere
+      ? `${setHere === 'month' ? 'Set for this month.' : 'Set for every month.'} Automatic would be ${formatCell(line.auto)}. Tap to change it.`
       : budgetOnly
         ? `Nothing set. Automatic would be ${formatCell(line.auto)}. Tap to set an amount.`
         : kind === 'in'
-          ? 'Its latest complete month. Tap to set your own amount.'
-          : 'Average of the complete months in view. Tap to set your own amount.';
+          ? 'Its latest complete month. Tap to set your own amount, for every month or just this one.'
+          : 'Average of the complete months in view. Tap to set your own amount, for every month or just this one.';
     return el(
       'button',
       {
-        class: `sh-cell sh-cell--proj${first}${zero}${line.set ? ' sh-cell--set' : ''}`,
+        class: `sh-cell sh-cell--proj${first}${zero}${setHere ? ' sh-cell--set' : ''}`,
         type: 'button',
         'aria-label': `Forecast for ${label}, ${formatMonth(column.key)}: ${text}, ${how}. Change it`,
         title: hint,
-        onclick: () => openBudget({ key: line.key, label, line, kind }),
+        onclick: () => openBudget({ key: line.key, label, line, kind, month: column.key }),
       },
-      line.set ? el('span', { class: 'sh-set-mark', text: '✎', 'aria-hidden': 'true' }) : null,
+      setHere ? el('span', { class: 'sh-set-mark', text: setHere === 'month' ? '◆' : '✎', 'aria-hidden': 'true' }) : null,
       text,
     );
   });
@@ -1029,7 +1039,7 @@ function renderSheet() {
   // Projection lines by category id, so each row can find its forecast.
   const pIncome = proj ? new Map(proj.income.rows.map((row) => [row.id, row])) : new Map();
   const pOut = proj ? new Map(proj.outgoings.rows.map((row) => [row.id, row])) : new Map();
-  const forecastOf = (line) => (line && line.value > 0 ? line.value : 0);
+  const forecastOf = (line) => (line ? Math.max(line.value || 0, ...(line.values || [])) : 0);
 
   // Rows with nothing in any month in view, and nothing forecast, are hidden (per account, since each
   // is used for different things) unless the viewer asks to see them.
@@ -1041,7 +1051,7 @@ function renderSheet() {
     return true;
   };
   const lineProj = (line, kind) => (proj && line ? { line, kind } : null);
-  const valueProj = (value) => (proj ? { value } : null);
+  const valueProj = (total) => (proj && total ? { values: totalAlong(total) } : null);
 
   // `good` says which way is welcome: income up, spending down. It colours the trend arrow and the Change view.
   rows.push(sectionRow('Income'));
@@ -1926,36 +1936,68 @@ emptyToggle.addEventListener('click', () => {
 
 // ---------- forecasts: your own amount instead of the automatic one ----------
 
-function openBudget({ key, label, line, kind }) {
+/** What is set for a line: the amount for every month, and the months with an amount of their own. */
+function budgetParts(entry) {
+  if (typeof entry === 'number') return { each: entry, months: {} };
+  if (entry && typeof entry === 'object') return { each: entry.each == null ? null : Number(entry.each), months: { ...(entry.months || {}) } };
+  return { each: null, months: {} };
+}
+
+function renderBudgetForm() {
+  const { month, currency } = state.budget;
+  const parts = budgetParts((state.settings.budgets[state.budget.accountId] || {})[state.budget.key]);
+  const monthly = parts.months[month];
+  const scope = budgetMonth.checked ? 'month' : 'each';
+  budgetAmount.value = scope === 'month' ? (monthly == null ? '' : String(monthly)) : parts.each == null ? '' : String(parts.each);
+  budgetClear.hidden = scope === 'month' ? monthly == null : parts.each == null;
+  budgetClear.textContent = scope === 'month' ? `Back to the usual for ${formatMonth(month, { short: true })}` : 'Use automatic';
+  budgetAmount.placeholder = scope === 'month' ? `Leave blank for ${parts.each == null ? 'automatic' : 'the every-month amount'}` : 'Leave blank for automatic';
+  const bits = [];
+  if (parts.each != null) bits.push(`every month ${formatMoney(parts.each, currency)}`);
+  const own = Object.keys(parts.months).sort();
+  if (own.length) bits.push(`${plural(own.length, 'month')} with an amount of their own (${own.map((k) => `${formatMonth(k, { short: true })} ${formatMoney(parts.months[k], currency)}`).join(', ')})`);
+  budgetSub.textContent = `${state.budget.accountName}${bits.length ? ` · set: ${bits.join('; ')}` : ' · nothing set'}`;
+}
+
+function openBudget({ key, label, line, kind, month }) {
   if (typeof budgetEl.showModal !== 'function') return;
   const account = selectedAccount();
   const data = state.sheet.data;
   if (!account || !data || !data.projection) return;
-  state.budget = { key, accountId: String(account.id) };
-  const currency = data.currency;
+  const parts = budgetParts((state.settings.budgets[String(account.id)] || {})[key]);
+  state.budget = { key, accountId: String(account.id), accountName: account.name, line, month, currency: data.currency };
   const basis = kind === 'in' ? 'its latest complete month' : `the average of the last ${plural(data.projection.basis.complete, 'complete month')}`;
   budgetTitle.textContent = `Forecast for ${label}`;
-  budgetSub.textContent = `${account.name} · per month`;
   budgetAuto.textContent =
     data.projection.mode === 'budget'
-      ? `Budget mode: only what you set counts. For reference, automatic would be ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`
-      : `Automatic: ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`;
-  budgetAmount.value = line.set ? String(line.value) : '';
-  budgetClear.hidden = !line.set;
+      ? `Budget mode: only what you set counts. For reference, automatic would be ${formatMoney(line.auto, data.currency)}, ${basis}.`
+      : `Automatic: ${formatMoney(line.auto, data.currency)}, ${basis}.`;
+  budgetMonthLabel.textContent = `${formatMonth(month)} only`;
+  // Open on the month's own amount when it has one, otherwise on the amount for every month.
+  budgetMonth.checked = parts.months[month] != null;
+  budgetEach.checked = !budgetMonth.checked;
   budgetError.hidden = true;
   budgetError.textContent = '';
   budgetHint.textContent = state.settings.persistent === true ? 'Saved for every device you open this page on.' : 'Saved in this browser only.';
   budgetSave.disabled = false;
+  renderBudgetForm();
   budgetEl.showModal();
   budgetAmount.focus();
 }
 
 async function writeBudget(amount) {
-  const { key, accountId } = state.budget;
+  const { key, accountId, month } = state.budget;
   const next = cloneSettings();
   const rows = { ...(next.budgets[accountId] || {}) };
-  if (amount == null) delete rows[key];
-  else rows[key] = amount;
+  const parts = budgetParts(rows[key]);
+  if (budgetMonth.checked) {
+    if (amount == null) delete parts.months[month];
+    else parts.months[month] = amount;
+  } else parts.each = amount;
+  const own = Object.keys(parts.months);
+  if (parts.each == null && own.length === 0) delete rows[key];
+  else if (own.length === 0) rows[key] = parts.each;
+  else rows[key] = parts.each == null ? { months: parts.months } : { each: parts.each, months: parts.months };
   if (Object.keys(rows).length > 0) next.budgets[accountId] = rows;
   else delete next.budgets[accountId];
   budgetSave.disabled = true;
@@ -1989,6 +2031,12 @@ budgetForm.addEventListener('submit', (event) => {
 });
 budgetClear.addEventListener('click', () => {
   if (state.budget) writeBudget(null);
+});
+budgetEach.addEventListener('change', () => {
+  if (state.budget) renderBudgetForm();
+});
+budgetMonth.addEventListener('change', () => {
+  if (state.budget) renderBudgetForm();
 });
 budgetCancel.addEventListener('click', () => {
   if (budgetEl.open) budgetEl.close();

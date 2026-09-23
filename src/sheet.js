@@ -86,36 +86,84 @@ export const PROJECTION_MONTHS = 3;
  */
 export const MAX_AHEAD = 12;
 
+const MONTH_KEY = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** A budget entry as stored: a flat amount, or { each, months: { 'YYYY-MM': amount } } for figures that vary by month. */
+function budgetEntry(value) {
+  if (value == null) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const each = value.each == null || value.each === '' ? null : Number(value.each);
+    const months = {};
+    for (const [key, amount] of Object.entries(value.months && typeof value.months === 'object' ? value.months : {})) {
+      if (MONTH_KEY.test(key) && Number.isFinite(Number(amount))) months[key] = Number(amount);
+    }
+    const hasEach = each != null && Number.isFinite(each);
+    if (!hasEach && Object.keys(months).length === 0) return null;
+    return { each: hasEach ? each : null, months };
+  }
+  const amount = Number(value);
+  return Number.isFinite(amount) ? { each: amount, months: {} } : null;
+}
+
 export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, count = PROJECTION_MONTHS }) {
   const currentIdx = months.findIndex((m) => m.current);
   if (currentIdx < 0) return null;
   const budgetOnly = mode === 'budget'; // only amounts the viewer set count; nothing is guessed
   const ahead = Math.min(Math.max(1, Number.parseInt(count, 10) || PROJECTION_MONTHS), MAX_AHEAD);
+  const currentKey = months[currentIdx].key;
+  const futureMonths = [];
+  for (let k = 1; k <= ahead; k += 1) futureMonths.push(monthRange(shiftMonth(currentKey, k)));
+  const keys = futureMonths.map((m) => m.key);
   const complete = months.map((m, i) => (!m.current && !m.future ? i : -1)).filter((i) => i >= 0);
   const at = (values, i) => Number(values[i]) || 0;
-  const avg = (values) => (complete.length ? round(complete.reduce((sum, i) => sum + at(values, i), 0) / complete.length) : 0);
+  const avg = (values) => (complete.length ? round(complete.reduce((acc, i) => acc + at(values, i), 0) / complete.length) : 0);
   const latest = (values) => (complete.length ? round(at(values, complete[complete.length - 1])) : 0);
-  const set = (key) => Object.prototype.hasOwnProperty.call(budgets, key) && Number.isFinite(Number(budgets[key]));
-  const line = (key, auto, values) => ({ key, value: set(key) ? round(Number(budgets[key])) : budgetOnly ? 0 : auto, auto, set: set(key), soFar: round(at(values, currentIdx)) });
+  const sum = (list) => round(list.reduce((acc, v) => acc + v, 0));
+
+  // One forecast line: the figure for the current month, one per month ahead, and which of those the
+  // viewer set. `fallback(monthKey)` applies where nothing is set: the automatic figure, or nothing at
+  // all in budget mode. A month's own amount beats the amount set for every month.
+  const forecast = (key, fallback) => {
+    const entry = budgetEntry(budgets[key]);
+    const pick = (monthKey) => {
+      if (entry && entry.months[monthKey] != null) return entry.months[monthKey];
+      if (entry && entry.each != null) return entry.each;
+      return fallback(monthKey);
+    };
+    const setMonths = {};
+    for (const monthKey of [currentKey, ...keys]) {
+      if (entry && entry.months[monthKey] != null) setMonths[monthKey] = 'month';
+      else if (entry && entry.each != null) setMonths[monthKey] = 'each';
+    }
+    return { key, set: Boolean(entry), each: entry ? entry.each : null, value: round(pick(currentKey)), values: keys.map((monthKey) => round(pick(monthKey))), setMonths };
+  };
+  const line = (key, auto, values) => ({ ...forecast(key, () => (budgetOnly ? 0 : auto)), auto, soFar: round(at(values, currentIdx)) });
 
   const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, latest(row.values), row.values) }));
   const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', latest(income.uncategorised), income.uncategorised) };
   const outgoingRows = outgoings.rows.map((row) => {
     if (!row.subs) return { id: row.id, label: row.label, ...line(`out:${row.id}`, avg(row.values), row.values), subs: null };
     const subs = row.subs.map((sub) => ({ id: sub.id, label: sub.label, ...line(`out:${sub.id}`, avg(sub.values), sub.values) }));
-    const sum = round(subs.reduce((acc, sub) => acc + sub.value, 0));
-    const key = `out:${row.id}`;
-    return { id: row.id, label: row.label, key, value: set(key) ? round(Number(budgets[key])) : sum, auto: sum, set: set(key), soFar: round(at(row.values, currentIdx)), subs };
+    // A group runs at the sum of its sub-categories unless it was set as a whole.
+    const sumNow = sum(subs.map((sub) => sub.value));
+    const sumMonths = keys.map((_, i) => sum(subs.map((sub) => sub.values[i])));
+    const group = forecast(`out:${row.id}`, (monthKey) => (monthKey === currentKey ? sumNow : sumMonths[keys.indexOf(monthKey)]));
+    return { id: row.id, label: row.label, ...group, auto: sumNow, soFar: round(at(row.values, currentIdx)), subs };
   });
   const outgoingUncategorised = { id: null, label: 'Uncategorised', ...line('out:none', avg(outgoings.uncategorised), outgoings.uncategorised) };
   const transfersIn = line('tr:in', avg(transfers.in), transfers.in);
   const transfersOut = line('tr:out', avg(transfers.out), transfers.out);
 
-  const incomeTotal = round(incomeRows.reduce((acc, row) => acc + row.value, 0) + incomeUncategorised.value);
-  const outgoingTotal = round(outgoingRows.reduce((acc, row) => acc + row.value, 0) + outgoingUncategorised.value);
-  const net = round(incomeTotal - outgoingTotal);
-  const monthly = round(net + transfersIn.value - transfersOut.value);
+  const totals = (rows, uncategorised) => ({
+    now: sum([...rows.map((row) => row.value), uncategorised.value]),
+    months: keys.map((_, i) => sum([...rows.map((row) => row.values[i]), uncategorised.values[i]])),
+  });
+  const incomeTotal = totals(incomeRows, incomeUncategorised);
+  const outgoingTotal = totals(outgoingRows, outgoingUncategorised);
+  const net = { now: round(incomeTotal.now - outgoingTotal.now), months: keys.map((_, i) => round(incomeTotal.months[i] - outgoingTotal.months[i])) };
+  const monthly = keys.map((_, i) => round(net.months[i] + transfersIn.values[i] - transfersOut.values[i]));
 
+  // What is still expected before this month ends: the forecast less what has already happened, never below zero.
   const remaining = (lines) => lines.reduce((acc, item) => acc + Math.max(0, item.value - item.soFar), 0);
   const outgoingLines = outgoingRows.flatMap((row) => (row.subs && !row.set ? row.subs : [row]));
   const rest = {
@@ -125,15 +173,13 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
     transfersOut: round(remaining([transfersOut])),
   };
 
-  const futureMonths = [];
-  for (let k = 1; k <= ahead; k += 1) futureMonths.push(monthRange(shiftMonth(months[currentIdx].key, k)));
   const closing = futureMonths.map(() => null);
   let currentMonthEnd = null;
   if (currentBalance != null) {
     currentMonthEnd = round(currentBalance + rest.income - rest.outgoings + rest.transfersIn - rest.transfersOut);
     let balance = currentMonthEnd;
     futureMonths.forEach((_, i) => {
-      balance = round(balance + monthly);
+      balance = round(balance + monthly[i]);
       closing[i] = balance;
     });
   }

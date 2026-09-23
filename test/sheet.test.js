@@ -119,7 +119,9 @@ test('the projection runs outgoings at their average, income at its latest month
   assert.equal(row(p.outgoings.rows, 'health').value, 20, 'a group is the sum of its subs');
   assert.equal(row(p.income.rows, 'salary').value, 2600, 'income repeats its latest complete month');
   assert.equal(p.transfers.out.value, 100);
-  assert.deepEqual([p.income.total, p.outgoings.total, p.net, p.monthly], [2600, 220, 2380, 2280]);
+  assert.deepEqual([p.income.total.now, p.outgoings.total.now, p.net.now, p.monthly], [2600, 220, 2380, [2280, 2280, 2280]]);
+  assert.deepEqual(row(p.outgoings.rows, 'groceries').values, [200, 200, 200], 'one figure per month ahead');
+  assert.deepEqual(p.income.total.months, [2600, 2600, 2600]);
   assert.equal(p.balance.now, 1000);
   assert.equal(p.balance.currentMonthEnd, 1000 + 2600 - 150 - 20 - 100, 'what is still expected this month: the salary, the rest of the groceries, the gym, the transfer');
   assert.deepEqual(p.balance.closing, [3330 + 2280, 3330 + 2280 * 2, 3330 + 2280 * 3]);
@@ -128,15 +130,26 @@ test('the projection runs outgoings at their average, income at its latest month
   assert.deepEqual([row(q.outgoings.rows, 'groceries').value, row(q.outgoings.rows, 'groceries').set, row(q.outgoings.rows, 'groceries').auto], [180, true, 200]);
   assert.equal(row(q.income.rows, 'salary').value, 3000);
   assert.equal(row(q.outgoings.rows, 'health').value, 0, 'a group can be set as a whole');
-  assert.equal(q.outgoings.total, 180);
+  assert.equal(q.outgoings.total.now, 180);
   assert.equal(q.balance.currentMonthEnd, 1000 + 3000 - 130 - 100);
+
+  // Figures that vary by month: a repayment that tails off, a one-off next month.
+  const v = build({ 'in:salary': { each: 2600, months: { '2026-11': 0 } }, 'out:groceries': { months: { '2026-10': 500 } } }).projection;
+  const salary = row(v.income.rows, 'salary');
+  assert.deepEqual([salary.value, salary.values], [2600, [2600, 0, 2600]], 'a month of its own beats the amount for every month');
+  assert.deepEqual(salary.setMonths, { '2026-09': 'each', '2026-10': 'each', '2026-11': 'month', '2026-12': 'each' });
+  const groc = row(v.outgoings.rows, 'groceries');
+  assert.deepEqual([groc.value, groc.values, groc.set], [200, [500, 200, 200], true], 'only October is set; the rest stay automatic');
+  assert.deepEqual(groc.setMonths, { '2026-10': 'month' });
+  assert.deepEqual(v.monthly, [2600 - 520 - 100, 0 - 220 - 100, 2280]);
+  assert.deepEqual(v.balance.closing, [3330 + 1980, 3330 + 1980 - 320, 3330 + 1980 - 320 + 2280]);
 
   const b = build({ 'out:groceries': 180 }, { forecastMode: 'budget', ahead: 5 }).projection;
   assert.equal(b.mode, 'budget');
   assert.equal(b.months.length, 5, 'ahead sets how far the projection runs');
   assert.deepEqual([row(b.outgoings.rows, 'groceries').value, row(b.outgoings.rows, 'groceries').set], [180, true]);
   assert.deepEqual([row(b.income.rows, 'salary').value, row(b.income.rows, 'salary').auto], [0, 2600], 'nothing is guessed in budget mode, but the automatic figure is kept for reference');
-  assert.deepEqual([b.income.total, b.outgoings.total, b.transfers.out.value], [0, 180, 0]);
+  assert.deepEqual([b.income.total.now, b.outgoings.total.now, b.transfers.out.value], [0, 180, 0]);
   assert.equal(b.balance.currentMonthEnd, 1000 - 130, 'only the rest of the groceries budget is still to come');
   assert.equal(build({}, { ahead: 99 }).projection.months.length, 12, 'capped at a year');
 
