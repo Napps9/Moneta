@@ -2072,12 +2072,25 @@ function openLedger() {
   ledgerEl.showModal();
 }
 
+/** Rules already saved that this import's matches contradict: the merchant now files differently, or not always the same way. */
+function staleRules(result) {
+  const seen = new Map();
+  for (const match of result.matches) {
+    if (!match.merchantKey) continue;
+    if (!seen.has(match.merchantKey)) seen.set(match.merchantKey, new Set());
+    seen.get(match.merchantKey).add(match.category);
+  }
+  const rules = state.settings.rules || {};
+  return Object.keys(rules).filter((merchant) => seen.has(merchant) && !(seen.get(merchant).size === 1 && seen.get(merchant).has(rules[merchant])));
+}
+
 function renderLedgerPreview(result) {
   const months = result.months.count ? `${formatMonth(result.months.from)} to ${formatMonth(result.months.to)}` : 'no months at all';
+  const stale = staleRules(result);
   const lines = [
     `Lunch Flow has ${plural(result.transactionsTotal, 'transaction')} for this account, ${months}.`,
     `${plural(result.matches.length, 'ledger line')} matched a transaction; ${plural(result.changed, 'transaction')} would change category.`,
-    `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.`,
+    `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.${stale.length ? ` ${plural(stale.length, 'earlier rule')} the matches contradict would be removed.` : ''}`,
   ];
   const combined = Array.isArray(result.combined) ? result.combined : [];
   if (combined.length) {
@@ -2148,6 +2161,7 @@ async function applyLedger(event) {
     next.transactions[key] = category;
     delete next.splits[key];
   }
+  for (const merchant of staleRules(result)) delete next.rules[merchant];
   for (const [merchant, category] of Object.entries(result.rules)) next.rules[merchant] = category;
   for (const [key, parts] of Object.entries(result.splits || {})) {
     next.splits[key] = parts.map((part) => ({ category: part.category, amount: part.amount }));
