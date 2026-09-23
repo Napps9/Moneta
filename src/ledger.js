@@ -8,12 +8,18 @@
  * time becomes a rule, so future months file themselves.
  */
 import { isAssignable } from './categories.js';
+import { normalizeBudget } from './settings.js';
 
 const MAX_ENTRIES = 20000;
+const MAX_BUDGETS = 300;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const BUDGET_KEY_RE = /^(in|out|tr):[a-z0-9_-]{1,64}$/;
 
-/** Validate a ledger file: { entries: [{ month, kind, category, amount, label? }], budgets?: { 'out:rent': 800 } }. */
+/**
+ * Validate a ledger file: { entries: [{ month, kind, category, amount, label? }], budgets? }.
+ * A budget is keyed like a forecast row and is a flat amount for every month ('out:rent': 800) or
+ * { each, months: { 'YYYY-MM': amount } } when some months have an amount of their own.
+ */
 export function normalizeLedger(raw) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const entries = [];
@@ -33,9 +39,10 @@ export function normalizeLedger(raw) {
   }
   const budgets = {};
   const rawBudgets = source.budgets && typeof source.budgets === 'object' && !Array.isArray(source.budgets) ? source.budgets : {};
-  for (const [key, value] of Object.entries(rawBudgets)) {
-    const amount = Number(value);
-    if (BUDGET_KEY_RE.test(key) && Number.isFinite(amount) && amount >= 0) budgets[key] = Math.round(amount * 100) / 100;
+  for (const [key, value] of Object.entries(rawBudgets).slice(0, MAX_BUDGETS)) {
+    if (!BUDGET_KEY_RE.test(key)) continue;
+    const budget = normalizeBudget(value);
+    if (budget != null) budgets[key] = budget;
   }
   return { entries, budgets };
 }

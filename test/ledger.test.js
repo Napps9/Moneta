@@ -17,14 +17,26 @@ test('normalizeLedger keeps usable lines and budgets, drops the rest', () => {
       { month: '2026-09', kind: 'out', category: 'groceries', amount: 0 },
       'junk',
     ],
-    budgets: { 'out:rent': '800', 'in:salary': 4180, 'bad key': 1, 'out:x': -5 },
+    budgets: {
+      'out:rent': '800',
+      'in:salary': 4180,
+      'bad key': 1,
+      'out:x': -5,
+      'in:loanrepay': { each: 0, months: { '2026-10': 500, '2026-11': '250', nope: 3 } },
+      'out:water': { months: { '2027-01': 55 } },
+      'out:energy': { each: null, months: {} },
+    },
   });
   assert.deepEqual(ledger.entries, [
     { month: '2026-09', kind: 'out', category: 'groceries', amount: 12.5, label: 'Groceries' },
     { month: '2026-09', kind: 'in', category: 'salary', amount: 4180, label: '' },
     { month: '2026-09', kind: 'out', category: null, amount: 82.4, label: 'Health' },
   ]);
-  assert.deepEqual(ledger.budgets, { 'out:rent': 800, 'in:salary': 4180 });
+  assert.deepEqual(
+    ledger.budgets,
+    { 'out:rent': 800, 'in:salary': 4180, 'in:loanrepay': { each: 0, months: { '2026-10': 500, '2026-11': 250 } }, 'out:water': { months: { '2027-01': 55 } } },
+    'budgets are flat amounts or { each, months }, as the settings keep them',
+  );
   assert.deepEqual(normalizeLedger(null), { entries: [], budgets: {} });
 });
 

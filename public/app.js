@@ -2081,7 +2081,12 @@ function renderLedgerPreview(result) {
   if (result.unmatched.length) lines.push(`${plural(result.unmatched.length, 'line')} had no transaction of that amount in that month.`);
   if (result.outside.length) lines.push(`${plural(result.outside.length, 'line')} fall in months Lunch Flow does not have.`);
   if (result.unassignable.length) lines.push(`${plural(result.unassignable.length, 'line')} cannot be filed: no category of that name here, a group rather than a category, or a refund inside an outgoing line.`);
-  const sample = result.unmatched.slice(0, 10).map((entry) => `${formatMonth(entry.month, { short: true })} · ${entry.label || entry.category || 'no category'} · ${plainNumber.format(Math.abs(entry.amount))}`);
+  const budgetRows = Object.values(result.budgets || {});
+  if (budgetRows.length) {
+    const varying = budgetRows.filter((row) => row && typeof row === 'object' && Object.keys(row.months || {}).length > 0).length;
+    lines.push(`${plural(budgetRows.length, 'budget')} come with it${varying ? `, ${varying} of them with months of their own` : ''}.`);
+  }
+  const sample =result.unmatched.slice(0, 10).map((entry) => `${formatMonth(entry.month, { short: true })} · ${entry.label || entry.category || 'no category'} · ${plainNumber.format(Math.abs(entry.amount))}`);
   ledgerPreview.replaceChildren(
     ...lines.map((text) => el('p', { text })),
     sample.length ? el('details', {}, el('summary', { text: `First ${sample.length} unmatched` }), el('ul', {}, sample.map((text) => el('li', { text })))) : null,

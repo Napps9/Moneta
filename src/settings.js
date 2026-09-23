@@ -35,6 +35,32 @@ export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, trans
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const money = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) / 100 : null;
+};
+
+/**
+ * One forecast amount as the viewer set it: a flat amount for every month, or
+ * { each, months: { 'YYYY-MM': amount } } when some months have an amount of their own.
+ * Returns the clean value, or null when nothing usable is in it.
+ */
+export function normalizeBudget(value) {
+  if (!isPlainObject(value)) return money(value);
+  const each = value.each == null || value.each === '' ? null : money(value.each);
+  const months = {};
+  let n = 0;
+  for (const [monthKey, amount] of Object.entries(isPlainObject(value.months) ? value.months : {})) {
+    if (n >= MAX_BUDGET_MONTHS) break;
+    const clean = money(amount);
+    if (!BUDGET_MONTH_RE.test(monthKey) || clean == null) continue;
+    months[monthKey] = clean;
+    n += 1;
+  }
+  if (n === 0) return each;
+  return each == null ? { months } : { each, months };
+}
+
 /** Validate raw settings against the groups and categories config. Anything unusable is dropped. */
 export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
   const out = emptySettings();
@@ -120,25 +146,6 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
 
   // Forecast amounts the viewer set, per account and row ('out:rent', 'in:salary', 'tr:out', ...): a flat
   // amount for every month, or { each, months: { 'YYYY-MM': amount } } when some months differ.
-  const money = (value) => {
-    const amount = Number(value);
-    return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) / 100 : null;
-  };
-  const cleanBudget = (value) => {
-    if (!isPlainObject(value)) return money(value);
-    const each = value.each == null || value.each === '' ? null : money(value.each);
-    const months = {};
-    let n = 0;
-    for (const [monthKey, amount] of Object.entries(isPlainObject(value.months) ? value.months : {})) {
-      if (n >= MAX_BUDGET_MONTHS) break;
-      const clean = money(amount);
-      if (!BUDGET_MONTH_RE.test(monthKey) || clean == null) continue;
-      months[monthKey] = clean;
-      n += 1;
-    }
-    if (n === 0) return each;
-    return each == null ? { months } : { each, months };
-  };
   let budgetAccounts = 0;
   for (const [account, rows] of Object.entries(isPlainObject(source.budgets) ? source.budgets : {})) {
     if (budgetAccounts >= MAX_ACCOUNTS) break;
@@ -149,7 +156,7 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     for (const [key, value] of Object.entries(rows)) {
       if (n >= MAX_BUDGET_ROWS) break;
       if (!BUDGET_KEY_RE.test(key)) continue;
-      const budget = cleanBudget(value);
+      const budget = normalizeBudget(value);
       if (budget == null) continue;
       clean[key] = budget;
       n += 1;
