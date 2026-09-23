@@ -705,17 +705,18 @@ function renderSheet() {
     el(
       'div',
       { class: 'sh-row sh-row--head' },
-      el('div', { class: 'sh-lbl', text: 'Category' }),
-      ...data.months.map((month) =>
-        el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` }, formatMonth(month.key, { short: true }), month.current ? el('span', { class: 'sh-so-far', text: 'so far' }) : null),
-      ),
+      el('div', { class: 'sh-lbl sh-lbl--head' }, el('span', { text: 'Category' }), el('span', { class: 'sh-so-far', text: 'balance at month end' })),
+      ...data.months.map((month, i) => {
+        const closing = data.balance.closing[i];
+        return el(
+          'div',
+          { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` },
+          el('span', { class: 'sh-month' }, formatMonth(month.key, { short: true }), month.current ? el('span', { class: 'sh-so-far sh-so-far--inline', text: 'so far' }) : null),
+          el('span', { class: `sh-bal${closing == null ? ' sh-bal--none' : ''}`, text: closing == null ? '–' : `${closing < 0 ? '-' : ''}${plainNumber.format(Math.abs(closing))}` }),
+        );
+      }),
     ),
   );
-
-  // Balances first, so they are in view without scrolling past every category.
-  rows.push(sectionRow('Balance'));
-  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
-  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
 
   rows.push(sectionRow('Income'));
   for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in' }));
@@ -739,6 +740,10 @@ function renderSheet() {
   rows.push(sectionRow('Transfers'));
   rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
   rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
+
+  rows.push(sectionRow('Balance'));
+  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
 
   sheetEl.replaceChildren(...rows);
 

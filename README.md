@@ -37,7 +37,7 @@ The page refreshes every five minutes while open, and the Refresh button fetches
 ## Two screens
 
 - **Balances** (`#/balances`): every account with its current balance, grouped by type or by bank, with totals.
-- **Accounts** (`#/accounts`): one account at a time, with its balance now next to its name, laid out like a spreadsheet: categories down the side, the last six calendar months across. The opening and closing balance of every month come first, then income and outgoings split into categories (see below) with a total for each, the net, and transfers between your own accounts (listed but not counted). The current month is shaded and marked "so far". The arrows move the window back in time. Tap any figure to see the transactions behind it, and tap a transaction to change its category.
+- **Accounts** (`#/accounts`): one account at a time, with its balance now next to its name, laid out like a spreadsheet: categories down the side, the last six calendar months across, each month's closing balance under its name at the top. Below that, income and outgoings split into categories (see below) with a total for each, the net, transfers between your own accounts (listed but not counted), and the opening and closing balance of every month. The current month is shaded and marked "so far". The arrows move the window back in time. Tap any figure to see the transactions behind it, and tap a transaction to change its category.
 
 Pin an account with the star on its chip to keep it at the front of the list. Account names on the Balances screen link straight to their sheet.
 
