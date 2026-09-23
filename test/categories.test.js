@@ -8,7 +8,9 @@ import {
   labelOf,
   loadCategoriesConfig,
   merchantKey,
+  mergeCustomCategories,
   normalizeCategoriesConfig,
+  normalizeCustomCategories,
   transactionKey,
 } from '../src/categories.js';
 import configFile from '../categories.config.js';
@@ -72,6 +74,45 @@ test('choices made in the app win, per transaction over per merchant, and only f
 test("Lunch Flow's own category is used when it matches a label here", () => {
   assert.equal(classifyTransaction(txn({ merchant: 'Corner Shop', description: 'CORNER SHOP', category: 'Groceries' }), { config }).category, 'groceries');
   assert.equal(classifyTransaction(txn({ merchant: 'Corner Shop', description: 'CORNER SHOP', category: 'Entertainment' }), { config }).category, null);
+});
+
+test('categories added in the app merge into the tree and are flagged', () => {
+  const custom = normalizeCustomCategories([
+    { id: 'u-kids', label: 'Kids', kind: 'out', group: true },
+    { id: 'u-nursery', label: ' Nursery  fees ', kind: 'out', parent: 'u-kids' },
+    { id: 'u-alcohol', label: 'Alcohol', kind: 'out', parent: 'luxuries' },
+    { id: 'u-charity', label: 'Charity', kind: 'out' },
+    { id: 'u-bonus', label: 'Bonus', kind: 'in', parent: 'luxuries', group: true },
+    { id: 'u-orphan', label: 'Orphan', kind: 'out', parent: 'gone' },
+    { id: 'groceries', label: 'Clash with the file', kind: 'out' },
+    { id: 'U-Kids', label: 'Duplicate id' },
+    { id: '', label: 'No id' },
+    { label: 'No id either' },
+    { id: 'u-blank', label: '   ' },
+    { id: 'transfer', label: 'Reserved' },
+    'junk',
+  ]);
+  assert.deepEqual(custom.map((c) => c.id), ['u-kids', 'u-nursery', 'u-alcohol', 'u-charity', 'u-bonus', 'u-orphan', 'groceries']);
+  assert.equal(custom[1].label, 'Nursery fees');
+  assert.deepEqual(custom[4], { id: 'u-bonus', label: 'Bonus', kind: 'in', parent: null, group: false }, 'income has no parent or group');
+
+  const merged = mergeCustomCategories(config, custom);
+  const tree = describeCategories(merged);
+  assert.deepEqual(tree.income.map((c) => c.label), ['Salary', 'Loan Repayments', 'Misc Income', 'Bonus']);
+  assert.equal(tree.income[3].custom, true);
+  assert.deepEqual(tree.outgoings.map((c) => c.label), ['Groceries', 'Luxuries', 'Living', 'Health', 'Transport', 'Money', 'Misc', 'Kids', 'Charity', 'Orphan']);
+  assert.equal(tree.outgoings[0].custom, undefined, 'the file wins an id clash');
+  assert.deepEqual(tree.outgoings[7].subs.map((c) => c.label), ['Nursery fees']);
+  assert.equal(tree.outgoings[7].custom, true);
+  assert.equal(tree.outgoings[7].subs[0].custom, true);
+  assert.ok(tree.outgoings[1].subs.some((c) => c.id === 'u-alcohol' && c.custom === true), 'a sub can join a group from the file');
+  assert.equal(merged.leaves.get('u-orphan').parent, null, 'a sub whose group has gone is its own category');
+  assert.equal(isAssignable(merged, 'u-nursery', 'out'), true);
+  assert.equal(isAssignable(merged, 'u-kids'), false, 'a group is not assignable');
+  assert.equal(labelOf(merged, 'u-nursery'), 'Nursery fees');
+  assert.equal(classifyTransaction(txn(), { config: merged, settings: { rules: { tesco: 'u-alcohol' } } }).category, 'u-alcohol');
+  assert.equal(mergeCustomCategories(config, []), config, 'nothing to merge gives the same config back');
+  assert.equal(describeCategories(config).outgoings[0].custom, undefined);
 });
 
 test('an empty or broken config falls back to something usable, and env JSON replaces the file', () => {

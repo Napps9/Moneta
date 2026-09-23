@@ -7,7 +7,7 @@
  * the current balance: closing = current - (everything after the period).
  */
 
-import { describeCategories, normalizeCategoriesConfig } from './categories.js';
+import { describeCategories, mergeCustomCategories, normalizeCategoriesConfig } from './categories.js';
 import { MONTH_RE, buildSheet, monthKey, monthWindow } from './sheet.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -178,6 +178,8 @@ export function createActivityService({
     const account = snapshot.accounts.find((a) => String(a.id) === String(accountId));
     if (!account) throw new ActivityError('Account not found', 404);
     const resolved = typeof balances.getResolvedSettings === 'function' ? await balances.getResolvedSettings(sent) : null;
+    // Categories added in the app sit on top of the file's tree.
+    const tree = mergeCustomCategories(categories, resolved ? resolved.categories : []);
 
     const from = window[0].from;
     const lastTo = window[window.length - 1].to;
@@ -188,7 +190,7 @@ export function createActivityService({
       accountId: account.id,
       transactions,
       months: window,
-      categories,
+      categories: tree,
       settings: resolved,
       currentBalance: account.balance ? account.balance.current : null,
       today,
@@ -201,7 +203,7 @@ export function createActivityService({
       account: pickAccount(account),
       currency,
       ...sheet,
-      categories: publicCategories,
+      categories: tree === categories ? publicCategories : describeCategories(tree),
       settings: snapshot.settings,
       fetchedAt,
       cached,

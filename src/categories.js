@@ -84,15 +84,72 @@ export function loadCategoriesConfig({ env = process.env, file = null, logger = 
   return normalizeCategoriesConfig(raw ?? {});
 }
 
-/** The tree as the page needs it: ids and labels only. */
+const MAX_CUSTOM = 200;
+
+/**
+ * Categories added in the app, kept as a flat list in the settings:
+ *   { id, label, kind: 'in' | 'out', parent: null | <parent id>, group: boolean }
+ * A group is a new parent for sub-categories; a sub names its parent; anything else is its own category.
+ */
+export function normalizeCustomCategories(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(raw) ? raw.slice(0, MAX_CUSTOM) : []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = cleanId(entry.id);
+    const label = typeof entry.label === 'string' ? entry.label.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+    if (!id || id.length > 40 || id === TRANSFER || !label || seen.has(id)) continue;
+    seen.add(id);
+    const kind = entry.kind === 'in' ? 'in' : 'out';
+    const group = kind === 'out' && entry.group === true;
+    const parent = kind === 'out' && !group ? cleanId(entry.parent) || null : null;
+    out.push({ id, label, kind, parent, group });
+  }
+  return out;
+}
+
+/** The file's tree plus the categories added in the app. The file wins any clash of ids. */
+export function mergeCustomCategories(config, custom) {
+  const list = Array.isArray(custom) ? custom : [];
+  if (list.length === 0) return config;
+  const rawLeaf = (leaf) => ({ id: leaf.id, label: leaf.label, keywords: leaf.keywords });
+  const income = config.income.map(rawLeaf);
+  const outgoings = config.outgoings.map((entry) => (entry.subs ? { id: entry.id, label: entry.label, subs: entry.subs.map(rawLeaf) } : rawLeaf(config.leaves.get(entry.id))));
+  const groups = new Map(outgoings.filter((entry) => entry.subs).map((entry) => [entry.id, entry]));
+  for (const item of list) {
+    if (item.kind === 'in') income.push({ id: item.id, label: item.label });
+    else if (item.group) {
+      const group = { id: item.id, label: item.label, subs: [] };
+      outgoings.push(group);
+      groups.set(item.id, group);
+    }
+  }
+  for (const item of list) {
+    if (item.kind !== 'out' || item.group) continue;
+    const group = item.parent ? groups.get(item.parent) : null;
+    // A sub whose group has gone stays as its own category, so nothing filed under it is lost.
+    if (group) group.subs.push({ id: item.id, label: item.label });
+    else outgoings.push({ id: item.id, label: item.label });
+  }
+  const merged = normalizeCategoriesConfig({ income, outgoings, transfers: { keywords: config.transferKeywords } });
+  // Flag what the app added; an id the file already has stays the file's.
+  merged.custom = new Set(list.map((item) => item.id).filter((id) => !config.leaves.has(id) && !config.parents.has(id)));
+  return merged;
+}
+
+/** The tree as the page needs it: ids and labels, and which ones were added in the app. */
 export function describeCategories(config) {
+  const custom = config.custom || new Set();
+  const flag = (item) => (custom.has(item.id) ? { ...item, custom: true } : item);
   return {
-    income: config.income.map((leaf) => ({ id: leaf.id, label: leaf.label })),
-    outgoings: config.outgoings.map((entry) => ({
-      id: entry.id,
-      label: entry.label,
-      subs: entry.subs ? entry.subs.map((leaf) => ({ id: leaf.id, label: leaf.label })) : null,
-    })),
+    income: config.income.map((leaf) => flag({ id: leaf.id, label: leaf.label })),
+    outgoings: config.outgoings.map((entry) =>
+      flag({
+        id: entry.id,
+        label: entry.label,
+        subs: entry.subs ? entry.subs.map((leaf) => flag({ id: leaf.id, label: leaf.label })) : null,
+      }),
+    ),
   };
 }
 

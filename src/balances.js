@@ -202,6 +202,7 @@ export function createBalanceService({
     rules: resolved.settings.rules,
     transactions: resolved.settings.transactions,
     splits: resolved.settings.splits,
+    categories: resolved.settings.categories,
   });
 
   async function getSnapshot({ refresh = false, settings: sent = null } = {}) {
@@ -233,6 +234,7 @@ export function createBalanceService({
       rules: settings.rules,
       transactions: settings.transactions,
       splits: settings.splits,
+      categories: settings.categories,
       groups: groupsConfig.groups,
     };
   }

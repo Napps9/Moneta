@@ -174,6 +174,30 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   assert.deepEqual(reclassified.settings.rules, { [merchant.merchantKey]: 'foodout' });
 });
 
+test('categories added in the app show up in the sheet and can be filed under', async () => {
+  const res = await fetch(`${base}/api/sheet?account=101&months=2`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        categories: [
+          { id: 'u-kids', label: 'Kids', kind: 'out', group: true },
+          { id: 'u-nursery', label: 'Nursery', kind: 'out', parent: 'u-kids' },
+        ],
+        rules: { tesco: 'u-nursery' },
+      },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const sheet = await res.json();
+  const kids = sheet.categories.outgoings.find((c) => c.id === 'u-kids');
+  assert.ok(kids && kids.custom === true && kids.subs[0].id === 'u-nursery', 'the new group and its sub are in the tree, flagged as app-made');
+  const row = sheet.outgoings.rows.find((r) => r.id === 'u-kids');
+  assert.ok(row.subs.find((s) => s.id === 'u-nursery').values[1] > 0, 'Tesco now lands in Nursery');
+  assert.equal(sheet.settings.categories.length, 2);
+  assert.deepEqual(sheet.settings.rules, { tesco: 'u-nursery' });
+});
+
 test('settings can be read and written when a store is configured', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moneta-app-'));
   const settingsStore = createFileStore(path.join(dir, 'settings.json'));
@@ -181,7 +205,7 @@ test('settings can be read and written when a store is configured', async () => 
   const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
   try {
     const before = await (await fetch(`${stored}/api/settings`)).json();
-    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, groups: before.groups });
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], groups: before.groups });
     assert.equal(before.groups.length, 3);
 
     const put = await fetch(`${stored}/api/settings`, {

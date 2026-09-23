@@ -19,6 +19,25 @@ const activityHeadEl = $('activity-head');
 const sheetWrapEl = $('sheet-wrap');
 const sheetEl = $('sheet');
 const sheetNoteEl = $('sheet-note');
+const sheetToolsEl = $('sheet-tools');
+const emptyToggle = $('empty-toggle');
+const sheetToolsSep = $('sheet-tools-sep');
+const newcatOpenSheet = $('newcat-open-sheet');
+const newcatOpen = $('newcat-open');
+const newcatEl = $('newcat');
+const newcatForm = $('newcat-form');
+const newcatName = $('newcat-name');
+const newcatOut = $('newcat-out');
+const newcatIn = $('newcat-in');
+const newcatUnderField = $('newcat-under-field');
+const newcatUnder = $('newcat-under');
+const newcatGroupField = $('newcat-group-field');
+const newcatGroup = $('newcat-group');
+const newcatMine = $('newcat-mine');
+const newcatError = $('newcat-error');
+const newcatHint = $('newcat-hint');
+const newcatCancel = $('newcat-cancel');
+const newcatSave = $('newcat-save');
 const drillEl = $('drill');
 const editorEl = $('editor');
 const editorForm = $('editor-form');
@@ -58,6 +77,7 @@ const VIEW_KEY = 'moneta.view';
 const SETTINGS_KEY = 'moneta.settings';
 const COLLAPSED_KEY = 'moneta.collapsed';
 const SHEET_MODE_KEY = 'moneta.sheetMode';
+const HIDE_EMPTY_KEY = 'moneta.hideEmpty';
 const SHEET_MONTHS = 6;
 const MONTHS_BACK = 24;
 const TRANSFER = 'transfer';
@@ -164,6 +184,22 @@ function writeSheetMode(mode) {
     /* per-browser convenience only */
   }
 }
+
+function readHideEmpty() {
+  try {
+    return localStorage.getItem(HIDE_EMPTY_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function writeHideEmpty(hide) {
+  try {
+    localStorage.setItem(HIDE_EMPTY_KEY, hide ? '1' : '0');
+  } catch {
+    /* per-browser convenience only */
+  }
+}
 function readPassword() {
   try {
     return localStorage.getItem(PASSWORD_KEY) || '';
@@ -198,7 +234,7 @@ function writeCollapsed(collapsed) {
 }
 
 // Settings kept in this browser, used when the server has nowhere to store them.
-const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {} });
+const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 function readLocalSettings() {
@@ -210,17 +246,22 @@ function readLocalSettings() {
       rules: isObject(parsed.rules) ? parsed.rules : {},
       transactions: isObject(parsed.transactions) ? parsed.transactions : {},
       splits: isObject(parsed.splits) ? parsed.splits : {},
+      categories: Array.isArray(parsed.categories) ? parsed.categories : [],
     };
   } catch {
     return emptySettings();
   }
 }
 const settingsEmpty = (s) =>
-  !s || Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length + Object.keys(s.splits || {}).length === 0;
+  !s ||
+  Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length + Object.keys(s.splits || {}).length + (s.categories || []).length === 0;
 function writeLocalSettings(settings) {
   try {
     if (settings && !settingsEmpty(settings)) {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions, splits: settings.splits || {} }));
+      localStorage.setItem(
+        SETTINGS_KEY,
+        JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions, splits: settings.splits || {}, categories: settings.categories || [] }),
+      );
     } else localStorage.removeItem(SETTINGS_KEY);
   } catch {
     /* storage unavailable: settings last for this page load only */
@@ -235,7 +276,8 @@ const state = {
   error: null,
   gate: null, // null | { kind: 'password' | 'unconfigured', message }
   view: readView(),
-  sheetMode: readSheetMode(), // 'type' (savings / spending / credit) or 'bank' (by institution)
+  sheetMode: readSheetMode(),
+  hideEmpty: readHideEmpty(), // 'type' (savings / spending / credit) or 'bank' (by institution)
   settings: { persistent: null, kind: null, error: null, ...readLocalSettings() },
   editing: null, // the account open in the account editor
   migrated: false,
@@ -316,7 +358,13 @@ function plural(count, singular, pluralForm = `${singular}s`) {
 }
 
 function settingsPayload() {
-  return { accounts: state.settings.accounts, rules: state.settings.rules, transactions: state.settings.transactions, splits: state.settings.splits || {} };
+  return {
+    accounts: state.settings.accounts,
+    rules: state.settings.rules,
+    transactions: state.settings.transactions,
+    splits: state.settings.splits || {},
+    categories: state.settings.categories || [],
+  };
 }
 
 function cloneSettings() {
@@ -325,6 +373,7 @@ function cloneSettings() {
     rules: { ...state.settings.rules },
     transactions: { ...state.settings.transactions },
     splits: Object.fromEntries(Object.entries(state.settings.splits || {}).map(([k, parts]) => [k, parts.map((part) => ({ ...part }))])),
+    categories: (state.settings.categories || []).map((c) => ({ ...c })),
   };
 }
 
@@ -829,29 +878,60 @@ function renderSheet() {
     ),
   );
 
+  // Rows with nothing in any month in view are hidden (per account, since each is used for different things)
+  // unless the viewer asks to see them.
+  const hide = state.hideEmpty;
+  let hiddenRows = 0;
+  const skip = (values) => {
+    if (!hide || anyPositive(values)) return false;
+    hiddenRows += 1;
+    return true;
+  };
+
   // `good` says which way is welcome: income up, spending down. It colours the trend arrow and the Change view.
   rows.push(sectionRow('Income'));
-  for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in', good: 'up' }));
-  rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null, good: 'up' }));
+  for (const row of data.income.rows) {
+    if (skip(row.values)) continue;
+    rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in', good: 'up' }));
+  }
+  if (!skip(data.income.uncategorised)) {
+    rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null, good: 'up' }));
+  }
   rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot', trend: 'in:total', good: 'up' }));
 
   rows.push(sectionRow('Outgoings'));
   for (const row of data.outgoings.rows) {
     if (row.subs) {
+      if (hide && !anyPositive(row.values)) {
+        hiddenRows += 1 + row.subs.length;
+        continue;
+      }
       const open = !state.collapsed[row.id];
       rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open }, good: 'down' }));
-      if (open) for (const sub of row.subs) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out', good: 'down' }));
+      for (const sub of row.subs) {
+        if (skip(sub.values)) continue;
+        if (open) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out', good: 'down' }));
+      }
     } else {
+      if (skip(row.values)) continue;
       rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out', good: 'down' }));
     }
   }
-  rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null, good: 'down' }));
+  if (!skip(data.outgoings.uncategorised)) {
+    rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null, good: 'down' }));
+  }
   rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot', trend: 'out:total', good: 'down' }));
   rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net', trend: 'net', good: 'up' }));
 
-  rows.push(sectionRow('Transfers'));
-  rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
-  rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
+  if (!hide || anyPositive(data.transfers.in) || anyPositive(data.transfers.out)) {
+    rows.push(sectionRow('Transfers'));
+    if (!skip(data.transfers.in)) rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
+    if (!skip(data.transfers.out)) rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
+  } else hiddenRows += 2;
+
+  emptyToggle.textContent = hide ? `Show ${plural(hiddenRows, 'unused row')}` : 'Hide unused rows';
+  emptyToggle.hidden = hide && hiddenRows === 0;
+  sheetToolsSep.hidden = emptyToggle.hidden;
 
   rows.push(sectionRow('Balance'));
   rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
@@ -949,6 +1029,7 @@ function renderAccountsScreen() {
   renderPicker(account);
   renderPeriodPicker(account);
   sheetNoteEl.hidden = true;
+  sheetToolsEl.hidden = true;
 
   if (!state.data) {
     renderActivityHead(null);
@@ -971,6 +1052,7 @@ function renderAccountsScreen() {
     renderSheet();
     renderDrill();
     sheetNoteEl.hidden = false;
+    sheetToolsEl.hidden = false;
   } else if (sheet.loading) {
     renderSheetSkeleton();
     drillEl.hidden = true;
@@ -1239,6 +1321,222 @@ catpickerEl.addEventListener('close', () => {
   state.catPicker = null;
 });
 
+// ---------- categories added in the app ----------
+
+const slug = (label) =>
+  String(label)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30);
+
+function currentTree() {
+  return state.sheet.data ? state.sheet.data.categories : { income: [], outgoings: [] };
+}
+
+function allCategoryIds() {
+  const cats = currentTree();
+  const ids = new Set(cats.income.map((c) => c.id));
+  for (const entry of cats.outgoings) {
+    ids.add(entry.id);
+    if (entry.subs) for (const sub of entry.subs) ids.add(sub.id);
+  }
+  for (const c of state.settings.categories || []) ids.add(c.id);
+  ids.add(TRANSFER);
+  return ids;
+}
+
+function customId(label, taken) {
+  const base = `u-${slug(label) || 'category'}`;
+  let id = base;
+  let n = 2;
+  while (taken.has(id)) {
+    id = `${base}-${n}`;
+    n += 1;
+  }
+  taken.add(id);
+  return id;
+}
+
+/** Put freshly added categories into the tree the page already holds, so the picker can offer them at once. */
+function applyToTree(added) {
+  const cats = currentTree();
+  for (const c of added) {
+    const item = { id: c.id, label: c.label, custom: true };
+    if (c.kind === 'in') cats.income.push(item);
+    else if (c.group) cats.outgoings.push({ ...item, subs: [] });
+    else {
+      const parent = c.parent ? cats.outgoings.find((e) => e.id === c.parent && e.subs) : null;
+      if (parent) parent.subs.push(item);
+      else cats.outgoings.push({ ...item, subs: null });
+    }
+  }
+}
+
+function removeFromTree(id) {
+  const cats = currentTree();
+  cats.income = cats.income.filter((c) => c.id !== id);
+  const kept = [];
+  for (const entry of cats.outgoings) {
+    if (entry.id === id) {
+      // The group goes; its sub-categories stay as categories of their own, as the server does it.
+      if (entry.subs) for (const sub of entry.subs) kept.push({ ...sub, subs: null });
+      continue;
+    }
+    if (entry.subs) entry.subs = entry.subs.filter((sub) => sub.id !== id);
+    kept.push(entry);
+  }
+  cats.outgoings = kept;
+}
+
+function renderNewCatForm() {
+  const income = newcatIn.checked;
+  newcatUnderField.hidden = income;
+  newcatGroupField.hidden = income || newcatUnder.value !== '__new';
+  newcatSave.textContent = 'Add';
+}
+
+function renderMine() {
+  const mine = state.settings.categories || [];
+  newcatMine.hidden = mine.length === 0;
+  if (mine.length === 0) {
+    newcatMine.replaceChildren();
+    return;
+  }
+  const labelFor = (id) => {
+    for (const entry of currentTree().outgoings) if (entry.id === id) return entry.label;
+    const own = mine.find((c) => c.id === id);
+    return own ? own.label : id;
+  };
+  newcatMine.replaceChildren(
+    el('div', { class: 'mine-title', text: 'Added here' }),
+    ...mine.map((c) =>
+      el(
+        'div',
+        { class: 'mine-row' },
+        el('span', {}, `${c.label} `, el('span', { class: 'mine-where', text: c.kind === 'in' ? '· income' : c.group ? '· group' : c.parent ? `· under ${labelFor(c.parent)}` : '· outgoing' })),
+        el('button', { class: 'link-btn', type: 'button', text: 'Remove', 'aria-label': `Remove ${c.label}`, onclick: () => removeCustom(c.id) }),
+      ),
+    ),
+  );
+}
+
+function openNewCat() {
+  if (typeof newcatEl.showModal !== 'function' || !state.sheet.data) return;
+  newcatName.value = '';
+  newcatGroup.value = '';
+  newcatOut.checked = true;
+  newcatIn.checked = false;
+  const parents = currentTree().outgoings.filter((entry) => entry.subs);
+  newcatUnder.replaceChildren(
+    el('option', { value: '', text: 'Its own category' }),
+    ...parents.map((entry) => el('option', { value: entry.id, text: entry.label })),
+    el('option', { value: '__new', text: 'A new group…' }),
+  );
+  // Suggest the group the viewer is looking at: the first parent chosen in the picker, if any.
+  if (state.catPicker && state.catPicker.choice) {
+    const parent = parents.find((entry) => entry.subs.some((sub) => sub.id === state.catPicker.choice));
+    if (parent) newcatUnder.value = parent.id;
+  }
+  newcatError.hidden = true;
+  newcatError.textContent = '';
+  newcatHint.textContent = state.settings.persistent === true ? 'Saved for every device you open this page on.' : 'Saved in this browser only.';
+  newcatSave.disabled = false;
+  renderNewCatForm();
+  renderMine();
+  newcatEl.showModal();
+  newcatName.focus();
+}
+
+function closeNewCat() {
+  if (newcatEl.open) newcatEl.close();
+}
+
+function showNewCatError(message) {
+  newcatError.textContent = message;
+  newcatError.hidden = false;
+}
+
+async function submitNewCat(event) {
+  event.preventDefault();
+  const name = newcatName.value.trim().replace(/\s+/g, ' ');
+  if (!name) {
+    showNewCatError('Give it a name.');
+    newcatName.focus();
+    return;
+  }
+  const kind = newcatIn.checked ? 'in' : 'out';
+  const taken = allCategoryIds();
+  const added = [];
+  if (kind === 'in') added.push({ id: customId(name, taken), label: name, kind: 'in', parent: null, group: false });
+  else if (newcatUnder.value === '__new') {
+    const groupName = newcatGroup.value.trim().replace(/\s+/g, ' ');
+    if (!groupName) {
+      showNewCatError('Name the new group too.');
+      newcatGroup.focus();
+      return;
+    }
+    const groupId = customId(groupName, taken);
+    added.push({ id: groupId, label: groupName, kind: 'out', parent: null, group: true });
+    added.push({ id: customId(name, taken), label: name, kind: 'out', parent: groupId, group: false });
+  } else added.push({ id: customId(name, taken), label: name, kind: 'out', parent: newcatUnder.value || null, group: false });
+
+  const next = cloneSettings();
+  next.categories = [...next.categories, ...added];
+  newcatSave.disabled = true;
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    showNewCatError(err && err.message ? err.message : 'Could not save.');
+    newcatSave.disabled = false;
+    return;
+  }
+  applyToTree(added);
+  closeNewCat();
+  const leaf = added[added.length - 1];
+  if (state.catPicker) {
+    // Back in the picker with the new category chosen, or offered in the split rows.
+    if (state.catPicker.mode === 'one') state.catPicker.choice = leaf.id;
+    renderCatPickerMode();
+  }
+  ensureSheet({ force: true });
+}
+
+async function removeCustom(id) {
+  const next = cloneSettings();
+  next.categories = next.categories.filter((c) => c.id !== id);
+  newcatSave.disabled = true;
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    showNewCatError(err && err.message ? err.message : 'Could not save.');
+    newcatSave.disabled = false;
+    return;
+  }
+  newcatSave.disabled = false;
+  removeFromTree(id);
+  renderMine();
+  if (state.catPicker) {
+    if (state.catPicker.choice === id) state.catPicker.choice = '';
+    for (const part of state.catPicker.parts) if (part.category === id) part.category = '';
+    renderCatPickerMode();
+  }
+  ensureSheet({ force: true });
+}
+
+newcatForm.addEventListener('submit', submitNewCat);
+newcatCancel.addEventListener('click', closeNewCat);
+newcatOpen.addEventListener('click', openNewCat);
+newcatOpenSheet.addEventListener('click', openNewCat);
+newcatOut.addEventListener('change', renderNewCatForm);
+newcatIn.addEventListener('change', renderNewCatForm);
+newcatUnder.addEventListener('change', renderNewCatForm);
+emptyToggle.addEventListener('click', () => {
+  state.hideEmpty = !state.hideEmpty;
+  writeHideEmpty(state.hideEmpty);
+  render();
+});
+
 // ---------- notices, header, gate ----------
 
 function renderNotice() {
@@ -1422,11 +1720,12 @@ async function saveSettings(next) {
       rules: body.rules || {},
       transactions: body.transactions || {},
       splits: body.splits || {},
+      categories: body.categories || [],
     };
     return;
   }
   writeLocalSettings(next);
-  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions, splits: next.splits || {} };
+  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions, splits: next.splits || {}, categories: next.categories || [] };
 }
 
 async function submitEditor(event) {
@@ -1511,6 +1810,7 @@ function adoptServerSettings(settings) {
     rules: settings.rules || {},
     transactions: settings.transactions || {},
     splits: settings.splits || {},
+    categories: settings.categories || [],
   };
 }
 
@@ -1534,7 +1834,7 @@ async function load({ refresh = false } = {}) {
         // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
         if (!state.migrated && !settingsEmpty(local) && serverEmpty) {
           state.migrated = true;
-          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {} });
+          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
           try {
             await saveSettings(local);
             writeLocalSettings(null);

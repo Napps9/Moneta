@@ -61,6 +61,11 @@
           <div id="sheet" class="sheet"></div>
         </div>
         <p id="sheet-note" class="sheet-note" hidden>Transfers between your own accounts are listed but left out of income, outgoings and net. Tap any figure to see the transactions behind it.</p>
+        <p id="sheet-tools" class="sheet-note" hidden>
+          <button type="button" class="link-btn" id="empty-toggle"></button>
+          <span id="sheet-tools-sep" aria-hidden="true"> · </span>
+          <button type="button" class="link-btn" id="newcat-open-sheet">Add a category</button>
+        </p>
         <section id="drill" class="txns" aria-label="Transactions" hidden></section>
       </div>
     </main>
@@ -123,12 +128,38 @@
           <label class="radio"><input type="radio" name="scope" value="merchant" id="scope-merchant" /><span id="scope-merchant-label">Always for this merchant</span></label>
           <label class="radio"><input type="radio" name="scope" value="one" id="scope-one" /><span>Just this one</span></label>
         </fieldset>
-        <p class="editor-toggle"><button type="button" class="link-btn" id="split-toggle">Split between categories</button></p>
+        <p class="editor-toggle">
+          <button type="button" class="link-btn" id="split-toggle">Split between categories</button>
+          <span aria-hidden="true"> · </span>
+          <button type="button" class="link-btn" id="newcat-open">New category…</button>
+        </p>
         <p id="catpicker-error" class="editor-error" role="alert" hidden></p>
         <p id="catpicker-hint" class="editor-hint"></p>
         <div class="editor-actions">
           <button type="button" class="btn btn--ghost" id="catpicker-cancel">Cancel</button>
           <button type="submit" class="btn" id="catpicker-save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="newcat" class="editor" aria-labelledby="newcat-title">
+      <form id="newcat-form" novalidate>
+        <h2 id="newcat-title">New category</h2>
+        <p class="editor-sub">Added on top of the ones in categories.config.js.</p>
+        <label class="field"><span>Name</span><input id="newcat-name" type="text" maxlength="40" autocomplete="off" /></label>
+        <fieldset class="scope" id="newcat-kind">
+          <legend class="sr-only">Kind</legend>
+          <label class="radio"><input type="radio" name="newcat-kind" value="out" id="newcat-out" checked /><span>Outgoing</span></label>
+          <label class="radio"><input type="radio" name="newcat-kind" value="in" id="newcat-in" /><span>Income</span></label>
+        </fieldset>
+        <label class="field" id="newcat-under-field"><span>Under</span><select id="newcat-under"></select></label>
+        <label class="field" id="newcat-group-field" hidden><span>Name of the new group</span><input id="newcat-group" type="text" maxlength="40" autocomplete="off" /></label>
+        <div id="newcat-mine" class="mine" hidden></div>
+        <p id="newcat-error" class="editor-error" role="alert" hidden></p>
+        <p id="newcat-hint" class="editor-hint"></p>
+        <div class="editor-actions">
+          <button type="button" class="btn btn--ghost" id="newcat-cancel">Close</button>
+          <button type="submit" class="btn" id="newcat-save">Add</button>
         </div>
       </form>
     </dialog>

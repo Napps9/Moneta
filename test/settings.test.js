@@ -40,6 +40,7 @@ test('normalizeSettings keeps valid entries and drops the rest', () => {
     rules: {},
     transactions: {},
     splits: {},
+    categories: [],
   });
   assert.deepEqual(normalizeSettings(null, config).accounts, {});
   assert.deepEqual(normalizeSettings({ accounts: [] }, config).accounts, {});
@@ -52,7 +53,12 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
   const settings = normalizeSettings(
     {
       accounts: { 1: { pinned: 1700000000000.7 }, 2: { pinned: true }, 3: { pinned: -5 }, 4: { pinned: 'yes' } },
-      rules: { tesco: 'Groceries', puregym: 'gym', shop: 'not-a-category', health: 'health', '': 'gym', pot: 'transfer' },
+      rules: { tesco: 'Groceries', puregym: 'gym', shop: 'not-a-category', health: 'health', '': 'gym', pot: 'transfer', nursery: 'u-nursery', kids: 'u-kids' },
+      categories: [
+        { id: 'u-kids', label: 'Kids', kind: 'out', group: true },
+        { id: 'u-nursery', label: 'Nursery', kind: 'out', parent: 'u-kids' },
+        { id: 'bad', label: '' },
+      ],
       transactions: { 'id:1': 'weekend', 'id:2': 42 },
       splits: {
         'id:9': [{ category: 'Rent', amount: '1100' }, { category: 'energy', amount: 100.123456 }, { category: 'nope', amount: 5 }, { amount: 50 }, { category: 'gym', amount: 0 }, 'junk'],
@@ -65,7 +71,14 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
     categories,
   );
   assert.deepEqual(settings.accounts, { 1: { pinned: 1700000000000 }, 2: { pinned: 1 } });
-  assert.deepEqual(settings.rules, { tesco: 'groceries', puregym: 'gym', pot: 'transfer' }, 'unknown categories and parents are dropped');
+  assert.deepEqual(settings.rules, { tesco: 'groceries', puregym: 'gym', pot: 'transfer', nursery: 'u-nursery' }, 'unknown categories and parents are dropped; app-made categories count');
+  assert.deepEqual(
+    settings.categories,
+    [
+      { id: 'u-kids', label: 'Kids', kind: 'out', parent: null, group: true },
+      { id: 'u-nursery', label: 'Nursery', kind: 'out', parent: 'u-kids', group: false },
+    ],
+  );
   assert.deepEqual(settings.transactions, { 'id:1': 'weekend' });
   assert.deepEqual(
     settings.splits,
@@ -88,7 +101,7 @@ test('the file store round-trips and starts empty', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moneta-settings-'));
   const store = createFileStore(path.join(dir, 'nested', 'settings.json'));
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
   await store.write({ version: 1, accounts: { 7: { group: 'savings' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 7: { group: 'savings' } } });
 });
@@ -109,7 +122,7 @@ test('the redis store talks Upstash REST', async () => {
   const store = createRedisStore({ url: 'https://example.upstash.io/', token: 'tok', fetchImpl });
 
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
   await store.write({ version: 1, accounts: { 1: { balance: 'negate' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 1: { balance: 'negate' } } });
 

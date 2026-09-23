@@ -4,6 +4,7 @@
  *   rules:        merchant -> category ("always file Tesco under Groceries")
  *   transactions: one transaction -> category ("just this one")
  *   splits:       one transaction -> parts [{ category, amount }] when it is shared between categories
+ *   categories:   categories and sub-categories added in the app, on top of categories.config.js
  *
  * Storage, in order of preference:
  *   - Redis over REST (Upstash): KV_REST_API_URL + KV_REST_API_TOKEN, or
@@ -14,7 +15,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { isAssignable } from './categories.js';
+import { isAssignable, mergeCustomCategories, normalizeCustomCategories } from './categories.js';
 
 export const TREATMENTS = ['reported', 'negate', 'credit-limit'];
 const MAX_ACCOUNTS = 500;
@@ -24,7 +25,7 @@ const MAX_SPLITS = 2000;
 const MAX_PARTS = 20;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
-export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
+export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [] });
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -63,11 +64,14 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     }
   }
 
+  // Rules and choices may point at categories added in the app, so validate against the merged tree.
+  out.categories = normalizeCustomCategories(source.categories);
+  const effectiveConfig = categoriesConfig ? mergeCustomCategories(categoriesConfig, out.categories) : null;
   const validCategory = (value) => {
     if (typeof value !== 'string') return null;
     const id = value.trim().toLowerCase();
     if (!id || id.length > 64) return null;
-    if (categoriesConfig && !isAssignable(categoriesConfig, id)) return null;
+    if (effectiveConfig && !isAssignable(effectiveConfig, id)) return null;
     return id;
   };
   const takeMap = (map, max, keyMax) => {

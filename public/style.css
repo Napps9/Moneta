@@ -1236,6 +1236,48 @@ button.sh-cell:focus-visible {
   margin: 0 0 14px;
 }
 
+/* Categories added in the app */
+
+.field[hidden],
+.mine[hidden],
+.sheet-note[hidden] {
+  display: none;
+}
+
+.mine {
+  margin: 4px 0 14px;
+}
+
+.mine-title {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.mine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.mine-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mine-row .mine-where {
+  color: var(--ink-3);
+}
+
 @media (max-width: 600px) {
   .split-row {
     grid-template-columns: minmax(0, 1fr) 96px 32px;

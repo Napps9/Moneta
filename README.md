@@ -62,6 +62,10 @@ To change a category, tap the figure in the sheet, then the transaction. Pick a 
 
 One payment that covers several things (rent and bills paid together, say) can be shared out: open it and choose **Split between categories**, then give each part a category and an amount until the whole amount is accounted for. Each part counts towards its own row, the transaction shows as "Split" wherever one of its parts lands, and filing it under a single category again removes the split. Splits apply to that one transaction.
 
+Rows with nothing in them across the months in view are hidden, so an account used only for bills shows only bill categories. "Show unused rows" under the sheet brings them back.
+
+New categories can be added in the app: **Add a category** under the sheet, or **New category…** in the picker while filing a transaction. A new one can be its own category, a sub-category of an existing group, a sub-category in a new group, or an income category. They sit on top of the ones in the file, are listed in the same dialog with a Remove link (removing a group leaves its sub-categories as categories of their own; anything filed under a removed category goes back to Uncategorised), and are settings like everything else below.
+
 `categories.config.js` holds the category tree and the keywords. Edit it to rename, add or remove categories, or to teach it your own merchants. A `MONETA_CATEGORIES` environment variable with the same structure as JSON replaces the file.
 
 ```js
