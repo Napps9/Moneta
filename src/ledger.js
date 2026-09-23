@@ -48,7 +48,6 @@ export function normalizeLedger(raw) {
   return { entries, budgets };
 }
 
-const slot = (month, kind, amount) => `${month}|${kind}|${Math.round(Math.abs(amount) * 100)}`;
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // Which transaction to take when several share a month and amount: one the app already files the same
@@ -98,22 +97,30 @@ function sameParts(a, b) {
  * Match ledger lines to transactions. `transactions` are sheet transactions (key, month, amount,
  * category, merchantKey); `config` is the category tree, used to refuse lines that name a category
  * the app does not have or that cannot take money on that side.
+ *
+ * Lines and transactions are grouped by month, side and amount. Within a group each line, in ledger
+ * order, takes the transaction it fits best. Lines a group has over its transactions are left over,
+ * and a transaction nothing matched whose amount is exactly the sum of some leftover amounts on its
+ * side is split into them. Which line of an amount goes into the split, when several share it, is
+ * decided by the payment's other months: a category present in every month of that payment beats
+ * one that is not, and a line whose category a transaction in the group is already filed under stays
+ * with that transaction.
  */
 export function reconcileLedger({ entries, transactions, config = null }) {
-  const pool = new Map();
-  for (const txn of transactions) {
-    const key = slot(txn.month, txn.amount >= 0 ? 'in' : 'out', txn.amount);
-    if (!pool.has(key)) pool.set(key, []);
-    pool.get(key).push(txn);
-  }
   const months = [...new Set(transactions.map((t) => t.month))].sort();
   const covered = new Set(months);
-  const used = new Set();
-  const matches = [];
-  const unmatched = [];
   const outside = [];
   const unassignable = [];
-
+  const order = new Map(); // line -> its place in the ledger
+  const groups = new Map(); // month|side|pence -> { month, side, pence, lines, txns }
+  const groupFor = (month, side, pence) => {
+    const key = `${month}|${side}|${pence}`;
+    if (!groups.has(key)) groups.set(key, { key, month, side, pence, lines: [], txns: [] });
+    return groups.get(key);
+  };
+  const sideOf = (txn) => (txn.amount >= 0 ? 'in' : 'out');
+  const penceOf = (amount) => Math.round(Math.abs(amount) * 100);
+  for (const txn of transactions) groupFor(txn.month, sideOf(txn), penceOf(txn.amount)).txns.push(txn);
   for (const entry of entries) {
     if (!covered.has(entry.month)) {
       outside.push(entry);
@@ -125,47 +132,108 @@ export function reconcileLedger({ entries, transactions, config = null }) {
       unassignable.push(entry);
       continue;
     }
-    const candidates = (pool.get(slot(entry.month, entry.kind, entry.amount)) || []).filter((txn) => !used.has(txn.key));
-    if (candidates.length === 0) {
-      unmatched.push(entry);
-      continue;
-    }
-    candidates.sort((a, b) => preference(b, entry) - preference(a, entry));
-    const txn = candidates[0];
-    used.add(txn.key);
-    matches.push({ key: txn.key, merchantKey: txn.merchantKey || '', month: entry.month, amount: txn.amount, category: entry.category, was: txn.category ?? null });
+    order.set(entry, order.size);
+    groupFor(entry.month, entry.kind, penceOf(entry.amount)).lines.push(entry);
   }
 
-  // Lines left over in a month may together be one payment: rent and bills paid to one person, say,
-  // which the ledger has line by line. A transaction nothing matched, whose amount is exactly the sum
-  // of some leftover lines on its side, is split into them, taking as many lines as add up. Lines in
-  // the same category merge into one part.
+  // Single matches within a group: each line, in ledger order, takes the transaction it fits best.
+  const taken = new Set(); // lines a split takes
+  const splitTxns = new Set(); // transactions split into lines
+  const single = (group) => {
+    const free = new Set(group.txns.filter((txn) => !splitTxns.has(txn)));
+    const matched = [];
+    const left = [];
+    for (const entry of group.lines) {
+      if (taken.has(entry)) continue;
+      let best = null;
+      for (const txn of free) if (!best || preference(txn, entry) > preference(best, entry)) best = txn;
+      if (!best) {
+        left.push(entry);
+        continue;
+      }
+      free.delete(best);
+      matched.push({ txn: best, entry });
+    }
+    return { matched, left, free: [...free] };
+  };
+
+  // Lines a group has over its transactions are left over, and may together be one payment: rent
+  // and bills paid to one person, say, which the ledger has line by line. A transaction nothing
+  // matched, whose amount is exactly the sum of some leftover amounts on its side, is split into
+  // them, taking as many lines as add up. Largest transactions first.
+  const leftoverBy = new Map(); // month|side -> [{ group, count }]
+  const spare = [];
+  for (const group of groups.values()) {
+    const count = group.lines.length - group.txns.length;
+    if (count > 0) {
+      const key = `${group.month}|${group.side}`;
+      if (!leftoverBy.has(key)) leftoverBy.set(key, []);
+      leftoverBy.get(key).push({ group, count });
+    }
+    spare.push(...single(group).free);
+  }
+  spare.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  const plans = []; // { txn, needs: Map<group, how many of its lines> }
+  for (const txn of spare) {
+    const items = [];
+    for (const pool of leftoverBy.get(`${txn.month}|${sideOf(txn)}`) || []) {
+      for (let i = 0; i < pool.count && items.length < MAX_COMBINED_LINES; i += 1) items.push(pool);
+    }
+    if (items.length < 2) continue;
+    const target = penceOf(txn.amount);
+    if (items.reduce((total, pool) => total + pool.group.pence, 0) < target) continue;
+    const chosen = combination(items.map((pool) => pool.group.pence), target);
+    if (!chosen) continue;
+    const needs = new Map();
+    for (const i of chosen) {
+      items[i].count -= 1;
+      needs.set(items[i].group, (needs.get(items[i].group) || 0) + 1);
+    }
+    plans.push({ txn, needs });
+    splitTxns.add(txn);
+  }
+
+  // Which line of an amount goes into a split, when several share it: a category the same payment
+  // has in every one of its months beats one it has in few, and a line whose category a transaction
+  // in the group is already filed under stays with that transaction. Lines in the same category
+  // merge into one part.
+  const monthsOf = new Map(); // merchant -> the months it is split in
+  for (const { txn } of plans) {
+    const merchant = txn.merchantKey || txn.key;
+    if (!monthsOf.has(merchant)) monthsOf.set(merchant, new Set());
+    monthsOf.get(merchant).add(txn.month);
+  }
+  const presence = (txn, group, category) => {
+    let n = 0;
+    for (const month of monthsOf.get(txn.merchantKey || txn.key)) {
+      const other = groups.get(`${month}|${group.side}|${group.pence}`);
+      if (other && other.lines.some((entry) => entry.category === category)) n += 1;
+    }
+    return n;
+  };
   const combined = [];
   const splits = {};
-  const absorbed = new Set();
-  const leftovers = new Map();
-  unmatched.forEach((entry, i) => {
-    const key = `${entry.month}|${entry.kind}`;
-    if (!leftovers.has(key)) leftovers.set(key, []);
-    leftovers.get(key).push(i);
-  });
-  const spare = transactions.filter((txn) => !used.has(txn.key)).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
-  for (const txn of spare) {
-    const indexes = (leftovers.get(`${txn.month}|${txn.amount >= 0 ? 'in' : 'out'}`) || []).filter((i) => !absorbed.has(i)).slice(0, MAX_COMBINED_LINES);
-    if (indexes.length < 2) continue;
-    const target = Math.round(Math.abs(txn.amount) * 100);
-    const pence = indexes.map((i) => Math.round(unmatched[i].amount * 100));
-    if (pence.reduce((total, p) => total + p, 0) < target) continue;
-    const chosen = combination(pence, target);
-    if (!chosen) continue;
+  for (const { txn, needs } of plans) {
     const byCategory = new Map();
-    for (const c of chosen) {
-      const entry = unmatched[indexes[c]];
-      absorbed.add(indexes[c]);
-      byCategory.set(entry.category, round2((byCategory.get(entry.category) || 0) + entry.amount));
+    let lines = 0;
+    for (const [group, k] of needs) {
+      const filed = new Map();
+      for (const other of group.txns) if (!splitTxns.has(other) && other.category) filed.set(other.category, (filed.get(other.category) || 0) + 1);
+      const ranked = group.lines
+        .filter((entry) => !taken.has(entry))
+        .map((entry) => {
+          const reserved = (filed.get(entry.category) || 0) > 0;
+          if (reserved) filed.set(entry.category, filed.get(entry.category) - 1);
+          return { entry, reserved, presence: presence(txn, group, entry.category) };
+        })
+        .sort((a, b) => Number(a.reserved) - Number(b.reserved) || b.presence - a.presence || order.get(a.entry) - order.get(b.entry));
+      for (const { entry } of ranked.slice(0, k)) {
+        taken.add(entry);
+        lines += 1;
+        byCategory.set(entry.category, round2((byCategory.get(entry.category) || 0) + entry.amount));
+      }
     }
     const parts = [...byCategory].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
-    used.add(txn.key);
     splits[txn.key] = parts;
     combined.push({
       key: txn.key,
@@ -173,12 +241,25 @@ export function reconcileLedger({ entries, transactions, config = null }) {
       merchant: txn.merchant || txn.description || '',
       month: txn.month,
       amount: txn.amount,
-      lines: chosen.length,
+      lines,
       parts: parts.map((part) => ({ ...part, label: config ? labelOf(config, part.category) : part.category })),
       was: txn.split ? 'split' : (txn.category ?? null),
       alike: sameParts(txn.parts, parts),
     });
   }
+  combined.sort((a, b) => (a.month === b.month ? Math.abs(b.amount) - Math.abs(a.amount) : a.month < b.month ? 1 : -1));
+
+  // The single matches, now that the splits have taken their lines.
+  const pairs = [];
+  const unmatched = [];
+  for (const group of groups.values()) {
+    const { matched, left } = single(group);
+    pairs.push(...matched);
+    unmatched.push(...left);
+  }
+  pairs.sort((a, b) => order.get(a.entry) - order.get(b.entry));
+  unmatched.sort((a, b) => order.get(a) - order.get(b));
+  const matches = pairs.map(({ txn, entry }) => ({ key: txn.key, merchantKey: txn.merchantKey || '', month: entry.month, amount: txn.amount, category: entry.category, was: txn.category ?? null }));
 
   // A merchant matched at least twice, always to the same category, becomes a rule.
   const byMerchant = new Map();
@@ -200,7 +281,7 @@ export function reconcileLedger({ entries, transactions, config = null }) {
     rules,
     combined,
     splits,
-    unmatched: unmatched.filter((_, i) => !absorbed.has(i)),
+    unmatched,
     outside,
     unassignable,
     months: { from: months[0] || null, to: months[months.length - 1] || null, count: months.length },

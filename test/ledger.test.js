@@ -90,8 +90,9 @@ test('reconcileLedger matches lines to transactions by month, side and amount, a
 
 test('reconcileLedger splits one payment that the ledger has as several lines', () => {
   const transactions = [
-    txn('h1', '2026-09', -1250, null, 'heather'),
+    txn('h1', '2026-09', -1150, null, 'heather'),
     txn('w1', '2026-09', -50, 'water', 'thames water'),
+    txn('u1', '2026-09', -50, null, 'cash'),
     txn('x1', '2026-09', -300, null, 'other'),
     txn('h2', '2026-08', -1100, null, 'heather'),
     txn('big', '2026-08', -5000, null, 'nothing adds up to it'),
@@ -99,41 +100,52 @@ test('reconcileLedger splits one payment that the ledger has as several lines', 
   const entries = normalizeLedger({
     entries: [
       { month: '2026-09', kind: 'out', category: 'rent', amount: 800 },
+      { month: '2026-09', kind: 'out', category: 'miscother', amount: 50, label: 'only this month' },
       { month: '2026-09', kind: 'out', category: 'water', amount: 50, label: 'the real bill' },
-      { month: '2026-09', kind: 'out', category: 'water', amount: 50, label: 'her share' },
       { month: '2026-09', kind: 'out', category: 'energy', amount: 50 },
       { month: '2026-09', kind: 'out', category: 'counciltax', amount: 50 },
       { month: '2026-09', kind: 'out', category: 'groceries', amount: 100 },
-      { month: '2026-09', kind: 'out', category: 'groceries', amount: 50 },
       { month: '2026-09', kind: 'out', category: 'foodout', amount: 150 },
       { month: '2026-08', kind: 'out', category: 'rent', amount: 800 },
-      { month: '2026-08', kind: 'out', category: 'groceries', amount: 300 },
+      { month: '2026-08', kind: 'out', category: 'groceries', amount: 150 },
+      { month: '2026-08', kind: 'out', category: 'water', amount: 50 },
+      { month: '2026-08', kind: 'out', category: 'energy', amount: 50 },
+      { month: '2026-08', kind: 'out', category: 'counciltax', amount: 50 },
       { month: '2026-08', kind: 'out', category: 'weekend', amount: 33, label: 'fits nothing' },
     ],
   }).entries;
   const result = reconcileLedger({ entries, transactions, config });
 
-  assert.equal(result.choices.w1, 'water', 'a line with a transaction of its own still matches it');
+  // September has four £50 lines and two £50 transactions, so two go into the split. The water line
+  // stays with the transaction filed as water; of the rest, energy and council tax are in August's
+  // payment too and beat the misc line that is not, even though it comes first in the ledger.
   assert.deepEqual(
     result.splits,
     {
       h1: [
         { category: 'rent', amount: 800 },
-        { category: 'groceries', amount: 150 },
         { category: 'foodout', amount: 150 },
+        { category: 'groceries', amount: 100 },
+        { category: 'energy', amount: 50 },
+        { category: 'counciltax', amount: 50 },
+      ],
+      h2: [
+        { category: 'rent', amount: 800 },
+        { category: 'groceries', amount: 150 },
         { category: 'water', amount: 50 },
         { category: 'energy', amount: 50 },
         { category: 'counciltax', amount: 50 },
       ],
-      h2: [{ category: 'rent', amount: 800 }, { category: 'groceries', amount: 300 }],
     },
     'the leftover lines that add up to a payment become its parts, merged by category',
   );
+  assert.equal(result.choices.w1, 'water', 'a line with a transaction of its own still matches it');
+  assert.equal(result.choices.u1, 'miscother', 'the line the split left behind goes to the unfiled transaction');
   assert.equal(result.combined.length, 2);
-  assert.equal(result.combined[0].key, 'h1', 'largest payment first');
-  assert.equal(result.combined[0].lines, 7);
+  assert.equal(result.combined[0].key, 'h1', 'latest month first');
+  assert.equal(result.combined[0].lines, 5);
   assert.equal(result.combined[0].parts[0].label, 'Rent');
   assert.deepEqual(result.unmatched.map((entry) => entry.label), ['fits nothing']);
-  assert.equal(result.changed, 2, 'the two splits; the water line confirms what was there');
+  assert.equal(result.changed, 3, 'the two splits and the cash transaction; the water line confirms what was there');
   assert.deepEqual(result.rules, {}, 'splits make no rules');
 });
