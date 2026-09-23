@@ -2,7 +2,7 @@
 
 A small web page that shows the current balance of every bank account connected to your [Lunch Flow](https://lunchflow.app) account.
 
-- One screen: totals per currency at the top, then each institution with its accounts and balances.
+- Two screens: every account's balance with totals, and a per-account sheet of income and outgoings by category and month.
 - Three ways to run it: deployed on Vercel, hosted on Claude, or self-hosted. None of them needs a build step or any dependencies.
 
 ## Option 1: deploy on Vercel
@@ -37,9 +37,41 @@ The page refreshes every five minutes while open, and the Refresh button fetches
 ## Two screens
 
 - **Balances** (`#/balances`): every account with its current balance, grouped by type or by bank, with totals.
-- **Accounts** (`#/accounts`): one account and one calendar month at a time. Pick the account and step through months to see money in, money out, the net, and the opening and month-end balance, with the month's transactions underneath. Account names on the Balances screen link straight to it.
+- **Accounts** (`#/accounts`): one account at a time, laid out like a spreadsheet: categories down the side, the last six calendar months across. Income and outgoings are split into categories (see below) with a total for each, then the net, transfers between your own accounts (listed but not counted), and the opening and closing balance of every month. The current month is shaded and marked "so far". The arrows move the window back in time. Tap any figure to see the transactions behind it, and tap a transaction to change its category.
 
-For a finished month the month-end balance is derived: the current balance minus everything that happened after that month (which is why transactions are fetched up to today). For the current month it is simply the balance now, labelled as month in progress. Positive transaction amounts count as money in, negative as money out, pending ones included.
+Pin an account with the star on its chip to keep it at the front of the list. Account names on the Balances screen link straight to their sheet.
+
+For a finished month the closing balance is derived: the current balance minus everything that happened after that month (which is why transactions are fetched up to today). For the current month it is simply the balance now. Positive transaction amounts count as money in, negative as money out, pending ones included.
+
+## Categories
+
+Every transaction on the Accounts screen lands in a category. Income has Salary, Loan Repayments and Misc Income. Outgoings has Groceries plus the larger categories Luxuries, Living, Health, Transport, Money and Misc, each with sub-categories (Food Out, Rent, Gym, Fuel, Credit Card, Phone and so on). A parent row is the sum of its sub-categories and collapses with the arrow next to its name.
+
+How a transaction is categorised, in order:
+
+1. A choice you made for that one transaction in the app.
+2. A rule you made for its merchant in the app ("Always for Tesco").
+3. Transfers between your own accounts: the description names another of your accounts, or contains words like *pot transfer* or *transfer to*. These are listed under Transfers and left out of income, outgoings and net.
+4. Keywords in `categories.config.js` (Tesco, Sainsbury's and Aldi are groceries; TfL and Trainline are travel; and so on).
+5. The category Lunch Flow itself reports, when its name matches one here.
+6. Otherwise it is Uncategorised, and the row says "tap to sort".
+
+To change a category, tap the figure in the sheet, then the transaction. Pick a category and choose **Always for** the merchant (every transaction from that merchant, in every month and account) or **Just this one**. Rules and choices are settings, stored in the same place as the account settings described below.
+
+`categories.config.js` holds the category tree and the keywords. Edit it to rename, add or remove categories, or to teach it your own merchants. A `MONETA_CATEGORIES` environment variable with the same structure as JSON replaces the file.
+
+```js
+export default {
+  income: [{ id: 'salary', label: 'Salary', keywords: ['salary', 'payroll'] }],
+  outgoings: [
+    { id: 'groceries', label: 'Groceries', keywords: ['tesco', 'sainsbury'] },
+    { id: 'living', label: 'Living', subs: [{ id: 'rent', label: 'Rent', keywords: ['rent'] }] },
+  ],
+  transfers: { keywords: ['pot transfer', 'transfer to'] },
+};
+```
+
+Keywords match whole words, case-insensitively, against the merchant and description, and only on the matching side (an outgoing keyword never files a refund as spending). Removing a category that a rule points at simply drops that rule.
 
 ## Grouping accounts
 
@@ -55,7 +87,7 @@ Every account row has a pencil button. It opens a small editor with two settings
   - *Amount owed, shown as negative*: for cards where the bank reports what you owe as a positive number.
   - *Amount left to spend on a card*: for cards where the bank reports the remaining credit. Enter the card's credit limit, and the page shows what you owe (limit minus remaining) as a negative amount, with the remaining credit underneath.
 
-Where those settings are kept depends on the deployment:
+Pinned accounts and the category rules and choices from the Accounts screen are settings too. Where they are all kept depends on the deployment:
 
 - **Vercel, out of the box**: in the browser you made them in. Each device has its own.
 - **Vercel with Upstash Redis**: shared across every device. In your Vercel project open **Storage**, create an **Upstash Redis** store (free tier is plenty), connect it to the project, and redeploy. The store adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` to the project; the app picks them up and, on the next visit, moves any settings from that browser into the store.
@@ -126,6 +158,7 @@ Settings are read from environment variables, or from a `.env` file next to `ser
 | `MONETA_PASSWORD` | unset | Optional. If set, the page asks for this password before showing balances. |
 | `MONETA_REQUIRE_PASSWORD` | unset | Optional. Set to `1` to refuse to serve balances until a password is set. |
 | `MONETA_GROUPS` | unset | Optional. JSON with the structure of `groups.config.js`; replaces that file when set. |
+| `MONETA_CATEGORIES` | unset | Optional. JSON with the structure of `categories.config.js`; replaces that file when set. |
 | `MONETA_DATA_DIR` | `data` | Self-hosted only. Where settings made in the app are stored. |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | unset | Upstash Redis over REST, for settings shared across devices. `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` work too. |
 
@@ -140,17 +173,20 @@ browser  ──GET /api/balances──▶  server.js  ──GET /accounts──�
 2. It calls `GET /accounts/:id/balance` for each account, a few at a time.
 3. The results are joined, sorted by institution, grouped, summed per currency and cached.
 4. The page renders the snapshot. An account whose balance could not be fetched is still listed, with the error next to it, and is left out of the totals.
-5. The Accounts screen calls `GET /accounts/:id/transactions` for the chosen account and period, cached per account and period.
+5. The Accounts screen calls `GET /accounts/:id/transactions` for the chosen account from the first month shown up to today, cached per account and range, and builds the sheet from those transactions, the category rules and the current balance.
 
 Routes served by the app:
 
 | Route | Description |
 | --- | --- |
 | `GET /` | The page. |
-| `GET /api/balances` | JSON snapshot of accounts, balances, groups and totals. Add `?refresh=1` to bypass the cache. When the server has no settings store, the page sends its settings in an `x-moneta-settings` header. |
-| `GET`, `PUT /api/settings` | Read or replace the per-account settings made in the app. |
+| `GET /api/balances` | JSON snapshot of accounts, balances, groups and totals. Add `?refresh=1` to bypass the cache. |
+| `GET`, `PUT /api/settings` | Read or replace the settings made in the app: account groups and balance treatments, pins, category rules and per-transaction choices. |
+| `GET /api/sheet?account=&to=YYYY-MM&months=` | One account's sheet: categories by month, totals, net, transfers, opening and closing balances, and the transactions behind them. Defaults to the six months ending now; `months` goes up to 12. |
 | `GET /api/activity?account=&from=&to=` | One account's transactions and totals for a period (dates as `YYYY-MM-DD`, at most 400 days; defaults to the current calendar month). |
 | `GET /api/health` | Returns `{ "ok": true, "passwordRequired": false }`. |
+
+When the server has no settings store, the page sends its settings along with each request instead: `/api/balances` and `/api/sheet` also accept a `POST` with `{ "settings": … }` in the body, or an `x-moneta-settings` header.
 
 When a password is set, `GET /api/balances` expects an `Authorization: Bearer <password>` header and answers `401` without it. The page handles this by asking for the password and remembering it in that browser.
 
@@ -164,18 +200,20 @@ npm test        # runs the test suite (node --test)
 Project layout:
 
 ```
-server.js          entry point for self-hosting: reads config, starts the HTTP server
-api/               Vercel serverless functions (balances, health)
-vercel.json        Vercel settings: static output from public/, security headers
-src/runtime.js     builds the client, snapshot service and password gate from the environment
-src/lunchflow.js   Lunch Flow API client and response normalization
-src/balances.js    snapshot builder: fan-out, totals, grouping, caching
-src/activity.js    per-account transactions and totals for a period
-src/groups.js      puts accounts into groups from names and the config
-src/settings.js    per-account settings made in the app, and where they are stored
-groups.config.js   group names, keywords and fixed assignments
-api/               Vercel serverless functions (balances, activity, settings, health)
-src/auth.js        password gate for the API
+server.js             entry point for self-hosting: reads config, starts the HTTP server
+api/                  Vercel serverless functions (balances, sheet, activity, settings, health)
+vercel.json           Vercel settings: static output from public/, security headers
+src/runtime.js        builds the client, services and password gate from the environment
+src/lunchflow.js      Lunch Flow API client and response normalization
+src/balances.js       snapshot builder: fan-out, totals, grouping, caching
+src/activity.js       per-account transactions: the monthly sheet and period totals
+src/sheet.js          turns transactions into the categories-by-month sheet with chained balances
+src/categories.js     category tree, keyword matching and transfer detection
+src/groups.js         puts accounts into groups from names and the config
+src/settings.js       settings made in the app, and where they are stored
+groups.config.js      group names, keywords and fixed assignments
+categories.config.js  category tree and merchant keywords
+src/auth.js           password gate for the API
 src/app.js         HTTP handlers: JSON API and static files
 src/mock.js        sample data used by `npm run mock`
 public/            the page (index.html, app.js, style.css)

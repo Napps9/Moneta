@@ -100,7 +100,8 @@ export function assembleSnapshot(raw, groupsConfig, settings = emptySettings()) 
       ...applyTreatment(account, setting),
       group,
       autoGroup,
-      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null },
+      pinned: setting.pinned ?? null,
+      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null, pinned: setting.pinned ?? null },
     };
   });
   const groups = groupsConfig.groups.map((group) => {
@@ -119,6 +120,7 @@ export function assembleSnapshot(raw, groupsConfig, settings = emptySettings()) 
 export function createBalanceService({
   client,
   groupsConfig = normalizeGroupsConfig({}),
+  categoriesConfig = null,
   settingsStore = createMemoryStore(),
   ttlMs = 5 * 60 * 1000,
   concurrency = 4,
@@ -126,6 +128,7 @@ export function createBalanceService({
   logger = console,
 } = {}) {
   if (!client) throw new Error('A Lunch Flow client is required');
+  const normalize = (raw) => normalizeSettings(raw, groupsConfig, categoriesConfig);
 
   let cache = null; // { raw, expiresAt }
   let inflight = null;
@@ -181,14 +184,14 @@ export function createBalanceService({
   async function resolveSettings(sent) {
     if (settingsStore.persistent) {
       try {
-        return { settings: normalizeSettings(await settingsStore.read(), groupsConfig), persistent: true, error: null };
+        return { settings: normalize(await settingsStore.read()), persistent: true, error: null };
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
         logger.warn?.(`Could not read settings: ${message}`);
-        return { settings: normalizeSettings(sent, groupsConfig), persistent: true, error: message };
+        return { settings: normalize(sent), persistent: true, error: message };
       }
     }
-    return { settings: normalizeSettings(sent, groupsConfig), persistent: false, error: null };
+    return { settings: normalize(sent), persistent: false, error: null };
   }
 
   const describeSettings = (resolved) => ({
@@ -196,6 +199,8 @@ export function createBalanceService({
     kind: settingsStore.kind,
     error: resolved.error,
     accounts: resolved.settings.accounts,
+    rules: resolved.settings.rules,
+    transactions: resolved.settings.transactions,
   });
 
   async function getSnapshot({ refresh = false, settings: sent = null } = {}) {
@@ -217,15 +222,29 @@ export function createBalanceService({
   }
 
   async function saveSettings(raw) {
-    const settings = normalizeSettings(raw, groupsConfig);
+    const settings = normalize(raw);
     await settingsStore.write(settings);
-    return { persistent: settingsStore.persistent, kind: settingsStore.kind, error: null, accounts: settings.accounts, groups: groupsConfig.groups };
+    return {
+      persistent: settingsStore.persistent,
+      kind: settingsStore.kind,
+      error: null,
+      accounts: settings.accounts,
+      rules: settings.rules,
+      transactions: settings.transactions,
+      groups: groupsConfig.groups,
+    };
+  }
+
+  /** The full normalized settings in effect for a request (used by the sheet). */
+  async function getResolvedSettings(sent) {
+    return (await resolveSettings(sent)).settings;
   }
 
   return {
     getSnapshot,
     getSettings,
     saveSettings,
+    getResolvedSettings,
     invalidate() {
       cache = null;
     },

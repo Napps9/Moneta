@@ -28,8 +28,8 @@ const BALANCES = {
 
 // How busy each account is: [outgoing transactions per week, monthly income].
 const PROFILES = {
-  101: { perWeek: 12, salary: 2650, incomeLabel: 'ACME LTD SALARY' },
-  102: { perWeek: 0.3, salary: 0, interest: 12.4 },
+  101: { perWeek: 12, salary: 2650, incomeLabel: 'ACME LTD SALARY', transferOut: 300, transferLabel: 'POT TRANSFER TO SAVINGS POT' },
+  102: { perWeek: 0.3, salary: 0, interest: 12.4, transferIn: 300, transferLabel: 'POT TRANSFER FROM CURRENT ACCOUNT' },
   201: { perWeek: 6, salary: 1900, incomeLabel: 'VIREMENT SALAIRE' },
   202: { perWeek: 0.2, salary: 0, interest: 31.1 },
   301: { perWeek: 8, salary: 0, cardPayment: 900 },
@@ -84,6 +84,12 @@ export function generateTransactions(account, { days = 150, now = Date.now() } =
     }
     if (profile.cardPayment && day === 15) {
       out.push({ id: `${account.id}-${iso}-payment`, accountId: account.id, date: iso, amount: money(profile.cardPayment + rand() * 300), currency: account.currency, merchant: null, description: 'PAYMENT RECEIVED - THANK YOU', category: 'Payment', isPending: false });
+    }
+    if (profile.transferOut && day === 15) {
+      out.push({ id: `${account.id}-${iso}-transfer`, accountId: account.id, date: iso, amount: -profile.transferOut, currency: account.currency, merchant: null, description: profile.transferLabel, category: 'Transfer', isPending: false });
+    }
+    if (profile.transferIn && day === 15) {
+      out.push({ id: `${account.id}-${iso}-transfer`, accountId: account.id, date: iso, amount: profile.transferIn, currency: account.currency, merchant: null, description: profile.transferLabel, category: 'Transfer', isPending: false });
     }
   }
   return out;

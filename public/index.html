@@ -49,10 +49,13 @@
         <nav id="account-picker" class="chips" aria-label="Choose an account"></nav>
         <div class="activity-bar">
           <div id="activity-head" class="activity-head"></div>
-          <nav id="period-picker" class="month-nav" aria-label="Month"></nav>
+          <nav id="period-picker" class="month-nav" aria-label="Months shown"></nav>
         </div>
-        <section id="activity-tiles" class="totals" aria-label="Totals for the period"></section>
-        <section id="activity-list" class="txns" aria-label="Transactions"></section>
+        <div id="sheet-wrap" class="sheet-wrap">
+          <div id="sheet" class="sheet"></div>
+        </div>
+        <p id="sheet-note" class="sheet-note" hidden>Transfers between your own accounts are listed but left out of income, outgoings and net. Tap any figure to see the transactions behind it.</p>
+        <section id="drill" class="txns" aria-label="Transactions" hidden></section>
       </div>
     </main>
 
@@ -93,6 +96,25 @@
         <div class="editor-actions">
           <button type="button" class="btn btn--ghost" id="editor-cancel">Cancel</button>
           <button type="submit" class="btn" id="editor-save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="catpicker" class="editor editor--wide" aria-labelledby="catpicker-title">
+      <form id="catpicker-form" novalidate>
+        <h2 id="catpicker-title">Transaction</h2>
+        <p id="catpicker-sub" class="editor-sub"></p>
+        <div id="catpicker-groups" class="optgroups"></div>
+        <fieldset class="scope">
+          <legend class="sr-only">Apply to</legend>
+          <label class="radio"><input type="radio" name="scope" value="merchant" id="scope-merchant" /><span id="scope-merchant-label">Always for this merchant</span></label>
+          <label class="radio"><input type="radio" name="scope" value="one" id="scope-one" /><span>Just this one</span></label>
+        </fieldset>
+        <p id="catpicker-error" class="editor-error" role="alert" hidden></p>
+        <p id="catpicker-hint" class="editor-hint"></p>
+        <div class="editor-actions">
+          <button type="button" class="btn btn--ghost" id="catpicker-cancel">Cancel</button>
+          <button type="submit" class="btn" id="catpicker-save">Save</button>
         </div>
       </form>
     </dialog>

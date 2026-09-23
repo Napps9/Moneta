@@ -90,7 +90,9 @@ function pattern(keyword) {
   }
   return re;
 }
-const matchesAny = (text, keywords) => keywords.some((keyword) => pattern(keyword).test(text));
+
+/** True when any keyword appears in the text as a whole word (case-insensitive). */
+export const matchesAny = (text, keywords) => keywords.some((keyword) => pattern(keyword).test(text));
 
 /**
  * Returns the group id for an account. Order of precedence:

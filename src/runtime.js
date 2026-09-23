@@ -6,8 +6,10 @@ import { createBalanceService } from './balances.js';
 import { createActivityService } from './activity.js';
 import { createAuth } from './auth.js';
 import { loadGroupsConfig } from './groups.js';
+import { loadCategoriesConfig } from './categories.js';
 import { createSettingsStore } from './settings.js';
 import groupsFile from '../groups.config.js';
+import categoriesFile from '../categories.config.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -24,6 +26,7 @@ export const truthy = (value) => /^(1|true|yes)$/i.test(String(value ?? ''));
  *   MONETA_PASSWORD          optional password the page must present
  *   MONETA_REQUIRE_PASSWORD  1 to refuse to serve balances until a password is set
  *   MONETA_GROUPS            JSON with the same shape as groups.config.js; replaces the file when set
+ *   MONETA_CATEGORIES        JSON with the same shape as categories.config.js; replaces the file when set
  *   MONETA_DATA_DIR          where self-hosted settings are kept (default ./data)
  *   KV_REST_API_URL/TOKEN    Upstash Redis over REST, for settings shared across devices
  *   (or UPSTASH_REDIS_REST_URL/TOKEN)
@@ -39,15 +42,20 @@ export function createRuntime(env = process.env, { mock = truthy(env.LUNCHFLOW_M
   }
 
   const groupsConfig = loadGroupsConfig({ env, file: groupsFile, logger });
+  const categoriesConfig = loadCategoriesConfig({ env, file: categoriesFile, logger });
   // Serverless hosts have no writable disk, so only self-hosted runs get the file store.
   const dataDir = truthy(env.VERCEL) ? null : path.resolve(root, env.MONETA_DATA_DIR || 'data');
   const settingsStore = createSettingsStore(env, { dataDir });
-  const service = client ? createBalanceService({ client, groupsConfig, settingsStore, ttlMs: ttlSeconds * 1000, logger }) : null;
-  const activity = service ? createActivityService({ client, balances: service, ttlMs: ttlSeconds * 1000, logger }) : null;
+  const service = client
+    ? createBalanceService({ client, groupsConfig, categoriesConfig, settingsStore, ttlMs: ttlSeconds * 1000, logger })
+    : null;
+  const activity = service
+    ? createActivityService({ client, balances: service, categories: categoriesConfig, ttlMs: ttlSeconds * 1000, logger })
+    : null;
   const auth = createAuth({
     password: env.MONETA_PASSWORD || '',
     required: truthy(env.MONETA_REQUIRE_PASSWORD),
   });
 
-  return { mock, client, service, activity, auth, groupsConfig, settingsStore, ttlSeconds };
+  return { mock, client, service, activity, auth, groupsConfig, categoriesConfig, settingsStore, ttlSeconds };
 }

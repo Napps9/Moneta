@@ -55,8 +55,16 @@ async function readJsonBody(req, limit = MAX_SETTINGS_BYTES) {
   return text ? parseSettingsJson(text) : {};
 }
 
-/** Settings the page sends along when the server has nowhere to keep them. */
-function settingsFromRequest(req) {
+/**
+ * Settings the page sends along when the server has nowhere to keep them:
+ * in a POST body as `{ settings }` (any size), or in an `x-moneta-settings`
+ * header for small payloads. A body that cannot be read throws.
+ */
+async function settingsFromRequest(req) {
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    return body && typeof body === 'object' && body.settings && typeof body.settings === 'object' ? body.settings : null;
+  }
   const header = req.headers['x-moneta-settings'];
   if (!header) return null;
   try {
@@ -65,6 +73,8 @@ function settingsFromRequest(req) {
     return null;
   }
 }
+
+const READ_METHODS = ['GET', 'HEAD', 'POST'];
 
 function checkAuth(auth, req) {
   if (!auth) return null;
@@ -98,8 +108,8 @@ function describeUpstreamError(err) {
 export function createBalancesHandler({ service = null, auth = null, logger = console } = {}) {
   return async function handleBalances(req, res) {
     res.setHeader('Cache-Control', 'no-store');
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.setHeader('Allow', 'GET, HEAD');
+    if (!READ_METHODS.includes(req.method)) {
+      res.setHeader('Allow', 'GET, HEAD, POST');
       return sendJson(req, res, 405, { error: 'Method not allowed' });
     }
     const denied = checkAuth(auth, req);
@@ -121,11 +131,67 @@ export function createBalancesHandler({ service = null, auth = null, logger = co
       return sendJson(req, res, 400, { error: 'Bad request' });
     }
     const refresh = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? '');
+    let settings;
     try {
-      const data = await service.getSnapshot({ refresh, settings: settingsFromRequest(req) });
+      settings = await settingsFromRequest(req);
+    } catch (err) {
+      return sendJson(req, res, 400, { error: 'Bad request', message: err.message });
+    }
+    try {
+      const data = await service.getSnapshot({ refresh, settings });
       return sendJson(req, res, 200, data);
     } catch (err) {
       logger.error?.(`Balance snapshot failed: ${err && err.message ? err.message : err}`);
+      const { status, body } = describeUpstreamError(err);
+      return sendJson(req, res, status, body);
+    }
+  };
+}
+
+/** Handler for `GET|POST /api/sheet?account=&to=YYYY-MM&months=6`: the Accounts sheet. */
+export function createSheetHandler({ service = null, auth = null, logger = console } = {}) {
+  return async function handleSheet(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!READ_METHODS.includes(req.method)) {
+      res.setHeader('Allow', 'GET, HEAD, POST');
+      return sendJson(req, res, 405, { error: 'Method not allowed' });
+    }
+    const denied = checkAuth(auth, req);
+    if (denied) {
+      if (denied.status === 401 && denied.attempted) await sleep(300);
+      return sendJson(req, res, denied.status, denied.body);
+    }
+    if (!service) {
+      return sendJson(req, res, 503, { error: 'Lunch Flow API key not configured', message: 'Set LUNCHFLOW_API_KEY and redeploy.' });
+    }
+    let url;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      return sendJson(req, res, 400, { error: 'Bad request' });
+    }
+    const accountId = url.searchParams.get('account');
+    if (!accountId) return sendJson(req, res, 400, { error: 'Bad request', message: 'account is required' });
+    let settings;
+    try {
+      settings = await settingsFromRequest(req);
+    } catch (err) {
+      return sendJson(req, res, 400, { error: 'Bad request', message: err.message });
+    }
+    try {
+      const data = await service.getSheet({
+        accountId,
+        to: url.searchParams.get('to'),
+        months: url.searchParams.get('months') ?? 6,
+        refresh: /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? ''),
+        settings,
+      });
+      return sendJson(req, res, 200, data);
+    } catch (err) {
+      if (err instanceof ActivityError) {
+        return sendJson(req, res, err.status, { error: err.status === 404 ? 'Not found' : 'Bad request', message: err.message });
+      }
+      logger.error?.(`Sheet request failed: ${err && err.message ? err.message : err}`);
       const { status, body } = describeUpstreamError(err);
       return sendJson(req, res, status, body);
     }
@@ -157,13 +223,19 @@ export function createActivityHandler({ service = null, auth = null, logger = co
     const accountId = url.searchParams.get('account');
     if (!accountId) return sendJson(req, res, 400, { error: 'Bad request', message: 'account is required' });
     const refresh = /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? '');
+    let settings;
+    try {
+      settings = await settingsFromRequest(req);
+    } catch (err) {
+      return sendJson(req, res, 400, { error: 'Bad request', message: err.message });
+    }
     try {
       const data = await service.getActivity({
         accountId,
         from: url.searchParams.get('from'),
         to: url.searchParams.get('to'),
         refresh,
-        settings: settingsFromRequest(req),
+        settings,
       });
       return sendJson(req, res, 200, data);
     } catch (err) {
@@ -226,6 +298,7 @@ export function createRequestHandler({ service = null, activity = null, auth = n
   const balances = createBalancesHandler({ service, auth, logger });
   const settings = createSettingsHandler({ service, auth, logger });
   const activityHandler = createActivityHandler({ service: activity, auth, logger });
+  const sheet = createSheetHandler({ service: activity, auth, logger });
   const health = createHealthHandler({ auth });
 
   async function serveStatic(req, res, pathname) {
@@ -284,6 +357,7 @@ export function createRequestHandler({ service = null, activity = null, auth = n
       if (url.pathname === '/api/balances') return await balances(req, res);
       if (url.pathname === '/api/settings') return await settings(req, res);
       if (url.pathname === '/api/activity') return await activityHandler(req, res);
+      if (url.pathname === '/api/sheet') return await sheet(req, res);
       if (url.pathname === '/api/health') return health(req, res);
       if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'Not found' });
       return await serveStatic(req, res, url.pathname);

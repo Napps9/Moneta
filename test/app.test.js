@@ -10,6 +10,8 @@ import { createMockClient } from '../src/mock.js';
 import { LunchFlowError } from '../src/lunchflow.js';
 import { createAuth } from '../src/auth.js';
 import { createFileStore } from '../src/settings.js';
+import { normalizeCategoriesConfig } from '../src/categories.js';
+import categoriesFile from '../categories.config.js';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -29,8 +31,9 @@ let base;
 
 before(async () => {
   const client = createMockClient({ delayMs: 0 });
-  const service = createBalanceService({ client, logger: silent });
-  const activity = createActivityService({ client, balances: service, logger: silent });
+  const categoriesConfig = normalizeCategoriesConfig(categoriesFile);
+  const service = createBalanceService({ client, categoriesConfig, logger: silent });
+  const activity = createActivityService({ client, balances: service, categories: categoriesConfig, logger: silent });
   ({ server: mockServer, base } = await listen(createRequestHandler({ service, activity, publicDir, logger: silent })));
 });
 
@@ -104,15 +107,15 @@ test('paths outside the public directory are not served', async () => {
 });
 
 test('unsupported methods and unknown API routes are rejected', async () => {
-  const post = await fetch(`${base}/api/balances`, { method: 'POST' });
-  assert.equal(post.status, 405);
+  const del = await fetch(`${base}/api/balances`, { method: 'DELETE' });
+  assert.equal(del.status, 405);
   const missing = await fetch(`${base}/api/nope`);
   assert.equal(missing.status, 404);
   const health = await fetch(`${base}/api/health`);
   assert.deepEqual(await health.json(), { ok: true, passwordRequired: false });
 });
 
-test('settings sent in a header shape the response when the server cannot store them', async () => {
+test('settings sent in a header or a POST body shape the response when the server cannot store them', async () => {
   const res = await fetch(`${base}/api/balances`, {
     headers: { 'x-moneta-settings': JSON.stringify({ accounts: { 101: { group: 'credit' } } }) },
   });
@@ -123,6 +126,51 @@ test('settings sent in a header shape the response when the server cannot store 
 
   const junk = await fetch(`${base}/api/balances`, { headers: { 'x-moneta-settings': '{nope' } });
   assert.equal(junk.status, 200, 'an unreadable header is ignored');
+
+  const posted = await fetch(`${base}/api/balances`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ settings: { accounts: { 101: { pinned: 1700000000000 } } } }),
+  });
+  assert.equal(posted.status, 200);
+  const postedBody = await posted.json();
+  assert.equal(postedBody.accounts.find((a) => a.id === 101).pinned, 1700000000000);
+
+  const badBody = await fetch(`${base}/api/balances`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' });
+  assert.equal(badBody.status, 400);
+});
+
+test('GET and POST /api/sheet return categories by month for an account', async () => {
+  const missing = await fetch(`${base}/api/sheet`);
+  assert.equal(missing.status, 400);
+  const unknown = await fetch(`${base}/api/sheet?account=999`);
+  assert.equal(unknown.status, 404);
+  const badMonth = await fetch(`${base}/api/sheet?account=101&to=2026-13`);
+  assert.equal(badMonth.status, 400);
+
+  const res = await fetch(`${base}/api/sheet?account=101&months=3`);
+  assert.equal(res.status, 200);
+  const sheet = await res.json();
+  assert.equal(sheet.account.id, 101);
+  assert.equal(sheet.months.length, 3);
+  assert.equal(sheet.months[2].current, true);
+  assert.equal(sheet.outgoings.rows.length, 7);
+  assert.ok(sheet.outgoings.rows.find((r) => r.id === 'groceries').values[2] > 0, 'Tesco and friends land in Groceries');
+  assert.ok(sheet.transfers.out[2] > 0, 'the pot transfer is a transfer');
+  assert.equal(sheet.balance.closing[2], 2510.43, 'the current month closes on the balance now');
+  assert.equal(sheet.balance.opening[2], sheet.balance.closing[1]);
+  assert.ok(Array.isArray(sheet.transactions) && sheet.transactions.length > 0);
+  assert.equal(sheet.categories.income.length, 3);
+
+  const merchant = sheet.transactions.find((t) => t.category === 'groceries');
+  const posted = await fetch(`${base}/api/sheet?account=101&months=3`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ settings: { rules: { [merchant.merchantKey]: 'foodout' } } }),
+  });
+  const reclassified = await posted.json();
+  assert.equal(reclassified.transactions.find((t) => t.key === merchant.key).category, 'foodout');
+  assert.deepEqual(reclassified.settings.rules, { [merchant.merchantKey]: 'foodout' });
 });
 
 test('settings can be read and written when a store is configured', async () => {
@@ -132,7 +180,7 @@ test('settings can be read and written when a store is configured', async () => 
   const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
   try {
     const before = await (await fetch(`${stored}/api/settings`)).json();
-    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, groups: before.groups });
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, groups: before.groups });
     assert.equal(before.groups.length, 3);
 
     const put = await fetch(`${stored}/api/settings`, {

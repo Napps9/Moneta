@@ -108,7 +108,8 @@ test('settings sent with the request are applied when the store is not persisten
   const current = tuned.accounts.find((a) => a.id === 1);
   assert.equal(current.group, 'savings');
   assert.equal(current.autoGroup, 'spending');
-  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null });
+  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null, pinned: null });
+  assert.equal(current.pinned, null);
   const card = tuned.accounts.find((a) => a.id === 3);
   assert.equal(card.balance.current, -3619.58);
   assert.equal(card.balance.treatment, 'credit-limit');

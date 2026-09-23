@@ -1,6 +1,8 @@
 /**
- * Per-account settings made in the app: which group an account belongs to and
- * how its reported balance should be read.
+ * Settings made in the app:
+ *   accounts:     per account, which group it belongs to, how to read its balance, whether it is pinned
+ *   rules:        merchant -> category ("always file Tesco under Groceries")
+ *   transactions: one transaction -> category ("just this one")
  *
  * Storage, in order of preference:
  *   - Redis over REST (Upstash): KV_REST_API_URL + KV_REST_API_TOKEN, or
@@ -11,25 +13,29 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isAssignable } from './categories.js';
 
 export const TREATMENTS = ['reported', 'negate', 'credit-limit'];
 const MAX_ACCOUNTS = 500;
-export const MAX_SETTINGS_BYTES = 64 * 1024;
+const MAX_RULES = 2000;
+const MAX_TRANSACTIONS = 5000;
+export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
-export const emptySettings = () => ({ version: 1, accounts: {} });
+export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {} });
 
-/** Validate raw settings against the groups config. Anything unusable is dropped. */
-export function normalizeSettings(raw, groupsConfig) {
+const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+/** Validate raw settings against the groups and categories config. Anything unusable is dropped. */
+export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
   const out = emptySettings();
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const accounts = source.accounts && typeof source.accounts === 'object' && !Array.isArray(source.accounts) ? source.accounts : {};
+  const source = isPlainObject(raw) ? raw : {};
   const groupIds = new Set(groupsConfig && Array.isArray(groupsConfig.groups) ? groupsConfig.groups.map((g) => g.id) : []);
 
   let count = 0;
-  for (const [key, value] of Object.entries(accounts)) {
+  for (const [key, value] of Object.entries(isPlainObject(source.accounts) ? source.accounts : {})) {
     if (count >= MAX_ACCOUNTS) break;
     const id = String(key).trim();
-    if (!id || !value || typeof value !== 'object') continue;
+    if (!id || !isPlainObject(value)) continue;
 
     const entry = {};
     const group = typeof value.group === 'string' ? value.group.trim().toLowerCase() : '';
@@ -45,11 +51,38 @@ export function normalizeSettings(raw, groupsConfig) {
       }
     }
 
+    if (value.pinned === true) entry.pinned = 1;
+    else if (typeof value.pinned === 'number' && Number.isFinite(value.pinned) && value.pinned > 0) entry.pinned = Math.floor(value.pinned);
+
     if (Object.keys(entry).length > 0) {
       out.accounts[id] = entry;
       count += 1;
     }
   }
+
+  const validCategory = (value) => {
+    if (typeof value !== 'string') return null;
+    const id = value.trim().toLowerCase();
+    if (!id || id.length > 64) return null;
+    if (categoriesConfig && !isAssignable(categoriesConfig, id)) return null;
+    return id;
+  };
+  const takeMap = (map, max, keyMax) => {
+    const result = {};
+    let n = 0;
+    for (const [key, value] of Object.entries(isPlainObject(map) ? map : {})) {
+      if (n >= max) break;
+      const cleanKey = String(key).trim();
+      const category = validCategory(value);
+      if (!cleanKey || cleanKey.length > keyMax || !category) continue;
+      result[cleanKey] = category;
+      n += 1;
+    }
+    return result;
+  };
+  out.rules = takeMap(source.rules, MAX_RULES, 200);
+  out.transactions = takeMap(source.transactions, MAX_TRANSACTIONS, 300);
+
   return out;
 }
 

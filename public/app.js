@@ -15,8 +15,10 @@ const navLinks = [...document.querySelectorAll('.nav-link')];
 const pickerEl = $('account-picker');
 const periodPickerEl = $('period-picker');
 const activityHeadEl = $('activity-head');
-const activityTilesEl = $('activity-tiles');
-const activityListEl = $('activity-list');
+const sheetWrapEl = $('sheet-wrap');
+const sheetEl = $('sheet');
+const sheetNoteEl = $('sheet-note');
+const drillEl = $('drill');
 const editorEl = $('editor');
 const editorForm = $('editor-form');
 const editorTitle = $('editor-title');
@@ -30,12 +32,27 @@ const editorError = $('editor-error');
 const editorHint = $('editor-hint');
 const editorCancel = $('editor-cancel');
 const editorSave = $('editor-save');
+const catpickerEl = $('catpicker');
+const catpickerForm = $('catpicker-form');
+const catpickerTitle = $('catpicker-title');
+const catpickerSub = $('catpicker-sub');
+const catpickerGroups = $('catpicker-groups');
+const scopeMerchant = $('scope-merchant');
+const scopeMerchantLabel = $('scope-merchant-label');
+const scopeOne = $('scope-one');
+const catpickerError = $('catpicker-error');
+const catpickerHint = $('catpicker-hint');
+const catpickerCancel = $('catpicker-cancel');
+const catpickerSave = $('catpicker-save');
 
 const AUTO_RELOAD_MS = 60_000;
 const PASSWORD_KEY = 'moneta.password';
 const VIEW_KEY = 'moneta.view';
 const SETTINGS_KEY = 'moneta.settings';
-const TRANSACTIONS_PAGE = 100;
+const COLLAPSED_KEY = 'moneta.collapsed';
+const SHEET_MONTHS = 6;
+const MONTHS_BACK = 24;
+const TRANSFER = 'transfer';
 
 const TREATMENT_HELP = {
   reported: 'Uses the number exactly as Lunch Flow reports it.',
@@ -52,25 +69,29 @@ const STATUS = {
 // ---------- calendar months (in the viewer's local time) ----------
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-const MONTHS_BACK = 24;
-const localIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const currentMonth = () => monthKey(new Date());
 const splitMonth = (key) => key.split('-').map(Number);
-
-function periodRange(key) {
-  const [year, month] = splitMonth(key);
-  return { from: localIso(new Date(year, month - 1, 1)), to: localIso(new Date(year, month, 0)) };
-}
 
 function shiftMonth(key, n) {
   const [year, month] = splitMonth(key);
   return monthKey(new Date(year, month - 1 + n, 1));
 }
 
-function formatMonth(key) {
+function formatMonth(key, { short = false } = {}) {
   const [year, month] = splitMonth(key);
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const date = new Date(year, month - 1, 1);
+  if (short) return `${date.toLocaleDateString(undefined, { month: 'short' })} ${String(year).slice(2)}`;
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function formatWindow(endKey, count) {
+  const startKey = shiftMonth(endKey, -(count - 1));
+  const [sy, sm] = splitMonth(startKey);
+  const [ey, em] = splitMonth(endKey);
+  const start = new Date(sy, sm - 1, 1).toLocaleDateString(undefined, sy === ey ? { month: 'short' } : { month: 'short', year: 'numeric' });
+  const end = new Date(ey, em - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  return `${start} – ${end}`;
 }
 
 const parseIso = (iso) => new Date(`${iso}T00:00:00`);
@@ -136,19 +157,45 @@ function writePassword(password) {
 }
 let sessionPassword = '';
 
-// Settings kept in this browser, used when the server has nowhere to store them.
-function readLocalSettings() {
+function readCollapsed() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
-    return parsed && typeof parsed.accounts === 'object' && parsed.accounts ? parsed.accounts : {};
+    const parsed = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || 'null');
+    return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
   }
 }
-function writeLocalSettings(accounts) {
+function writeCollapsed(collapsed) {
   try {
-    if (accounts && Object.keys(accounts).length > 0) localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts }));
-    else localStorage.removeItem(SETTINGS_KEY);
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed));
+  } catch {
+    /* per-browser convenience only */
+  }
+}
+
+// Settings kept in this browser, used when the server has nowhere to store them.
+const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {} });
+const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+function readLocalSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (!isObject(parsed)) return emptySettings();
+    return {
+      accounts: isObject(parsed.accounts) ? parsed.accounts : {},
+      rules: isObject(parsed.rules) ? parsed.rules : {},
+      transactions: isObject(parsed.transactions) ? parsed.transactions : {},
+    };
+  } catch {
+    return emptySettings();
+  }
+}
+const settingsEmpty = (s) => !s || Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length === 0;
+function writeLocalSettings(settings) {
+  try {
+    if (settings && !settingsEmpty(settings)) {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions }));
+    } else localStorage.removeItem(SETTINGS_KEY);
   } catch {
     /* storage unavailable: settings last for this page load only */
   }
@@ -162,11 +209,14 @@ const state = {
   error: null,
   gate: null, // null | { kind: 'password' | 'unconfigured', message }
   view: readView(), // 'type' (savings / spending / credit) or 'bank' (by institution)
-  settings: { persistent: null, kind: null, error: null, accounts: readLocalSettings() },
-  editing: null, // the account open in the editor
+  settings: { persistent: null, kind: null, error: null, ...readLocalSettings() },
+  editing: null, // the account open in the account editor
   migrated: false,
   route: parseHash(),
-  activity: { key: null, data: null, loading: false, error: null, showAll: false },
+  sheet: { key: null, data: null, loading: false, error: null },
+  cell: null, // { id, label, cats, sign, monthIndex }
+  collapsed: readCollapsed(),
+  catPicker: null, // { txn, choice }
 };
 
 // ---------- helpers ----------
@@ -194,11 +244,7 @@ function moneyFormatter(currency) {
   let formatter = formatters.get(key);
   if (formatter) return formatter;
   try {
-    formatter = new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency,
-      currencyDisplay: 'narrowSymbol',
-    });
+    formatter = new Intl.NumberFormat(undefined, { style: 'currency', currency, currencyDisplay: 'narrowSymbol' });
   } catch {
     const plain = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     formatter = { format: (value) => (currency ? `${plain.format(value)} ${currency}` : plain.format(value)) };
@@ -215,6 +261,13 @@ function formatMoney(amount, currency) {
 function formatSigned(amount, currency) {
   if (amount == null || Number.isNaN(amount)) return '—';
   return `${amount > 0 ? '+' : ''}${formatMoney(amount, currency)}`;
+}
+
+const plainNumber = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatCell(value) {
+  if (value == null || Number.isNaN(value)) return '—';
+  if (value === 0) return '–';
+  return `${value < 0 ? '-' : ''}${plainNumber.format(Math.abs(value))}`;
 }
 
 function relativeTime(iso) {
@@ -235,15 +288,30 @@ function plural(count, singular, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
-function apiHeaders(extra = {}) {
-  const headers = { accept: 'application/json', ...extra };
+function settingsPayload() {
+  return { accounts: state.settings.accounts, rules: state.settings.rules, transactions: state.settings.transactions };
+}
+
+function cloneSettings() {
+  return {
+    accounts: Object.fromEntries(Object.entries(state.settings.accounts).map(([k, v]) => [k, { ...v }])),
+    rules: { ...state.settings.rules },
+    transactions: { ...state.settings.transactions },
+  };
+}
+
+/** Fetch an API route, carrying the password and, when the server has no store, the browser's settings. */
+function apiFetch(path, { method = 'GET', body = null } = {}) {
+  const headers = { accept: 'application/json' };
   const password = sessionPassword || readPassword();
   if (password) headers.authorization = `Bearer ${password}`;
-  // Until the server says it stores settings itself, send the ones kept in this browser.
-  if (state.settings.persistent !== true && Object.keys(state.settings.accounts).length > 0) {
-    headers['x-moneta-settings'] = JSON.stringify({ accounts: state.settings.accounts });
+  if (body) {
+    return fetch(path, { method, headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
   }
-  return headers;
+  if (state.settings.persistent !== true && !settingsEmpty(state.settings)) {
+    return fetch(path, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ settings: settingsPayload() }) });
+  }
+  return fetch(path, { method, headers });
 }
 
 function groupByInstitution(accounts) {
@@ -258,10 +326,24 @@ function groupByInstitution(accounts) {
   return [...groups.values()];
 }
 
+function pinnedAt(account) {
+  const setting = state.settings.accounts[String(account.id)];
+  return setting && setting.pinned ? setting.pinned : null;
+}
+
+/** Pinned accounts first, in the order they were pinned, then the rest as the server lists them. */
+function orderedAccounts() {
+  if (!state.data) return [];
+  const pinned = state.data.accounts.filter((a) => pinnedAt(a)).sort((a, b) => pinnedAt(a) - pinnedAt(b));
+  const rest = state.data.accounts.filter((a) => !pinnedAt(a));
+  return pinned.concat(rest);
+}
+
 function selectedAccount() {
-  if (!state.data || state.data.accounts.length === 0) return null;
+  const ordered = orderedAccounts();
+  if (ordered.length === 0) return null;
   const wanted = state.route.accountId;
-  return state.data.accounts.find((account) => String(account.id) === String(wanted)) || state.data.accounts[0];
+  return ordered.find((account) => String(account.id) === String(wanted)) || ordered[0];
 }
 
 // ---------- shared rendering ----------
@@ -274,13 +356,7 @@ function renderLogo(group, size = '') {
     text: group.name.trim().charAt(0) || '?',
   });
   if (!group.logo || !/^https?:\/\//i.test(group.logo)) return fallback;
-  const img = el('img', {
-    class: `logo${suffix ? ` logo${suffix}` : ''}`,
-    src: group.logo,
-    alt: '',
-    loading: 'lazy',
-    referrerpolicy: 'no-referrer',
-  });
+  const img = el('img', { class: `logo${suffix ? ` logo${suffix}` : ''}`, src: group.logo, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
   img.addEventListener('error', () => img.replaceWith(fallback));
   return img;
 }
@@ -337,10 +413,7 @@ function fitTileValues(container) {
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    fitTileValues(totalsEl);
-    fitTileValues(activityTilesEl);
-  }, 100);
+  resizeTimer = setTimeout(() => fitTileValues(totalsEl), 100);
 });
 
 // ---------- balances screen ----------
@@ -351,17 +424,11 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
   if (showInstitution) meta.push(el('span', { text: account.institutionName }));
   if (inactive) meta.push(renderBadge(account.status));
   if (account.balance && account.balance.treatment === 'credit-limit') {
-    meta.push(
-      el('span', {
-        text: `${formatMoney(account.balance.available, account.balance.currency)} left of ${formatMoney(account.balance.limit, account.balance.currency)}`,
-      }),
-    );
+    meta.push(el('span', { text: `${formatMoney(account.balance.available, account.balance.currency)} left of ${formatMoney(account.balance.limit, account.balance.currency)}` }));
   } else if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
     meta.push(el('span', { text: `Available ${formatMoney(account.balance.available, account.balance.currency)}` }));
   }
-  if (account.error) {
-    meta.push(el('span', { class: 'row-error', text: `Balance unavailable: ${account.error}` }));
-  }
+  if (account.error) meta.push(el('span', { class: 'row-error', text: `Balance unavailable: ${account.error}` }));
 
   const amount = account.balance
     ? el('div', { class: 'row-amount', text: formatMoney(account.balance.current, account.balance.currency) })
@@ -374,7 +441,7 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
     el(
       'div',
       { class: 'row-main' },
-      el('a', { class: 'row-name', href: accountHash(account.id, state.route.period), text: account.name, title: 'See income and outgoings' }),
+      el('a', { class: 'row-name', href: accountHash(account.id, state.route.period), text: account.name, title: 'See this account by month' }),
       el('div', { class: 'row-meta' }, meta),
     ),
     amount,
@@ -386,13 +453,7 @@ function renderInstitution(group) {
   return el(
     'section',
     { class: 'institution', 'aria-label': group.name },
-    el(
-      'div',
-      { class: 'institution-head' },
-      renderLogo(group),
-      el('h2', { text: group.name }),
-      el('span', { class: 'institution-count', text: plural(group.accounts.length, 'account') }),
-    ),
+    el('div', { class: 'institution-head' }, renderLogo(group), el('h2', { text: group.name }), el('span', { class: 'institution-count', text: plural(group.accounts.length, 'account') })),
     el('ul', { class: 'rows' }, group.accounts.map((account) => renderAccountRow(account))),
   );
 }
@@ -403,12 +464,7 @@ function renderGroup(group, accounts) {
   return el(
     'section',
     { class: 'group', 'aria-label': group.label },
-    el(
-      'div',
-      { class: 'group-head' },
-      el('div', { class: 'group-title' }, el('h2', { text: group.label }), el('span', { class: 'group-count', text: plural(members.length, 'account') })),
-      renderTotals(group.totals),
-    ),
+    el('div', { class: 'group-head' }, el('div', { class: 'group-title' }, el('h2', { text: group.label }), el('span', { class: 'group-count', text: plural(members.length, 'account') })), renderTotals(group.totals)),
     el('ul', { class: 'rows' }, members.map((account) => renderAccountRow(account, { showInstitution: true }))),
   );
 }
@@ -416,11 +472,8 @@ function renderGroup(group, accounts) {
 function renderTile(total, hero) {
   const label = total.currency ? `Total in ${total.currency}` : 'Total (unknown currency)';
   const metaParts = [plural(total.accountCount, 'account')];
-  if (total.available != null && total.available !== total.current) {
-    metaParts.push(`${formatMoney(total.available, total.currency)} available`);
-  }
+  if (total.available != null && total.available !== total.current) metaParts.push(`${formatMoney(total.available, total.currency)} available`);
   if (total.excludedCount > 0) metaParts.push(`${plural(total.excludedCount, 'account')} not counted`);
-
   return el(
     'div',
     { class: `tile${hero ? ' tile--hero' : ''}` },
@@ -447,18 +500,7 @@ function renderBalancesSkeleton() {
         'section',
         { class: 'institution', 'aria-hidden': 'true' },
         el('div', { class: 'institution-head' }, el('div', { class: 'logo-fallback skeleton' }), el('h2', { class: 'skeleton', text: 'Institution' })),
-        el(
-          'ul',
-          { class: 'rows' },
-          [0, 1].map(() =>
-            el(
-              'li',
-              { class: 'row' },
-              el('div', { class: 'row-main' }, el('div', { class: 'row-name skeleton', text: 'Account name' })),
-              el('div', { class: 'row-amount skeleton', text: '0,000.00' }),
-            ),
-          ),
-        ),
+        el('ul', { class: 'rows' }, [0, 1].map(() => el('li', { class: 'row' }, el('div', { class: 'row-main' }, el('div', { class: 'row-name skeleton', text: 'Account name' })), el('div', { class: 'row-amount skeleton', text: '0,000.00' })))),
       ),
     ),
   );
@@ -472,17 +514,10 @@ function renderBalancesData() {
         'div',
         { class: 'tile tile--empty' },
         el('div', { class: 'tile-value', text: data.accounts.length === 0 ? 'No accounts connected yet.' : 'No balances available.' }),
-        el('div', {
-          class: 'tile-meta',
-          text:
-            data.accounts.length === 0
-              ? 'Connect a bank in Lunch Flow and refresh this page.'
-              : 'Lunch Flow returned accounts but no balances. Try refreshing in a moment.',
-        }),
+        el('div', { class: 'tile-meta', text: data.accounts.length === 0 ? 'Connect a bank in Lunch Flow and refresh this page.' : 'Lunch Flow returned accounts but no balances. Try refreshing in a moment.' }),
       ),
     );
   } else {
-    // A single currency gets the hero treatment; several currencies are peers.
     const hero = data.totals.length === 1;
     totalsEl.replaceChildren(...data.totals.map((total) => renderTile(total, hero)));
   }
@@ -490,11 +525,8 @@ function renderBalancesData() {
 
   renderViewToggle();
   const byType = state.view === 'type' && Array.isArray(data.groups) && data.groups.length > 0;
-  if (byType) {
-    accountsEl.replaceChildren(...data.groups.map((group) => renderGroup(group, data.accounts)).filter(Boolean));
-  } else {
-    accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
-  }
+  if (byType) accountsEl.replaceChildren(...data.groups.map((group) => renderGroup(group, data.accounts)).filter(Boolean));
+  else accountsEl.replaceChildren(...groupByInstitution(data.accounts).map(renderInstitution));
 }
 
 function renderBalancesScreen() {
@@ -507,7 +539,10 @@ function renderBalancesScreen() {
   }
 }
 
-// ---------- accounts screen ----------
+// ---------- accounts screen: picker, months, sheet ----------
+
+let scrolledChip = null;
+let scrolledSheet = null;
 
 function renderPicker(selected) {
   if (!state.data) {
@@ -515,182 +550,400 @@ function renderPicker(selected) {
     return;
   }
   pickerEl.replaceChildren(
-    ...state.data.accounts.map((account) =>
-      el(
-        'a',
-        {
-          class: 'chip',
-          href: accountHash(account.id, state.route.period),
-          'aria-current': selected && String(selected.id) === String(account.id) ? 'true' : 'false',
-          title: `${account.name} · ${account.institutionName}`,
-        },
-        renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'chip'),
-        el('span', { text: account.name }),
-      ),
-    ),
+    ...orderedAccounts().map((account) => {
+      const on = Boolean(selected && String(selected.id) === String(account.id));
+      const pinned = Boolean(pinnedAt(account));
+      return el(
+        'span',
+        { class: `chip${on ? ' chip--on' : ''}${pinned ? ' chip--pinned' : ''}` },
+        el(
+          'a',
+          { class: 'chip-main', href: accountHash(account.id, state.route.period), 'aria-current': on ? 'true' : 'false', title: `${account.name} · ${account.institutionName}` },
+          renderLogo({ name: account.institutionName, logo: account.institutionLogo }, 'chip'),
+          el('span', { text: account.name }),
+        ),
+        el('button', {
+          class: 'chip-star',
+          type: 'button',
+          'aria-label': `${pinned ? 'Unpin' : 'Pin'} ${account.name}`,
+          'aria-pressed': pinned ? 'true' : 'false',
+          title: pinned ? 'Unpin from the front' : 'Pin to the front',
+          text: pinned ? '★' : '☆',
+          onclick: () => togglePin(account),
+        }),
+      );
+    }),
   );
+  // Bring the chosen account into view when it changes, without fighting the user's own scrolling afterwards.
+  const chosen = selected ? String(selected.id) : null;
+  if (chosen && chosen !== scrolledChip) {
+    scrolledChip = chosen;
+    const active = pickerEl.querySelector('.chip--on');
+    if (active && typeof active.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function renderPeriodPicker(selected) {
-  const month = state.route.period;
+  const end = state.route.period;
   const now = currentMonth();
   const target = (key) => (selected ? accountHash(selected.id, key) : '#/accounts');
 
   const options = [];
   for (let back = 0; back < MONTHS_BACK; back += 1) {
     const key = shiftMonth(now, -back);
-    options.push(el('option', { value: key, text: formatMonth(key), selected: key === month }));
+    options.push(el('option', { value: key, text: formatWindow(key, SHEET_MONTHS), selected: key === end }));
   }
-  if (!options.some((option) => option.value === month)) {
-    options.push(el('option', { value: month, text: formatMonth(month), selected: true }));
-  }
+  if (!options.some((option) => option.value === end)) options.push(el('option', { value: end, text: formatWindow(end, SHEET_MONTHS), selected: true }));
 
   periodPickerEl.replaceChildren(
-    el('a', { class: 'month-btn', href: target(shiftMonth(month, -1)), 'aria-label': `Previous month, ${formatMonth(shiftMonth(month, -1))}`, text: '‹' }),
-    el(
-      'select',
-      {
-        class: 'month-select',
-        'aria-label': 'Month',
-        onchange: (event) => {
-          location.hash = target(event.target.value);
-        },
-      },
-      options,
-    ),
-    month < now
-      ? el('a', { class: 'month-btn', href: target(shiftMonth(month, 1)), 'aria-label': `Next month, ${formatMonth(shiftMonth(month, 1))}`, text: '›' })
+    el('a', { class: 'month-btn', href: target(shiftMonth(end, -1)), 'aria-label': 'Earlier months', text: '‹' }),
+    el('select', { class: 'month-select month-select--range', 'aria-label': 'Months shown', onchange: (event) => { location.hash = target(event.target.value); } }, options),
+    end < now
+      ? el('a', { class: 'month-btn', href: target(shiftMonth(end, 1)), 'aria-label': 'Later months', text: '›' })
       : el('span', { class: 'month-btn month-btn--disabled', 'aria-hidden': 'true', text: '›' }),
   );
 }
 
-function renderActivityHead(account) {
+function renderActivityHead(account, sheet) {
   if (!account) {
     activityHeadEl.replaceChildren();
     return;
   }
-  const month = state.route.period;
-  const suffix = month === currentMonth() ? ' · month so far' : '';
-  activityHeadEl.replaceChildren(
-    el('h2', { text: account.name }),
-    el('span', { text: `${account.institutionName} · ${formatMonth(month)}${suffix}` }),
-  );
+  const currency = sheet ? sheet.currency : account.currency;
+  const parts = [account.institutionName];
+  if (currency) parts.push(`figures in ${currency}`);
+  parts.push('month-end balances');
+  activityHeadEl.replaceChildren(el('h2', { text: account.name }), el('span', { text: parts.join(' · ') }));
 }
 
-function statTile(label, value, meta, extraClass = '') {
+function cellId(id, monthIndex) {
+  return `${id}|${monthIndex}`;
+}
+
+function valueCell({ value, monthIndex, month, id, cats, sign, label, clickable }) {
+  const selected = Boolean(state.cell && state.cell.id === id && state.cell.monthIndex === monthIndex);
+  const cls = `sh-cell${month.current ? ' sh-cell--cur' : ''}${!value ? ' sh-cell--zero' : ''}${selected ? ' sh-cell--sel' : ''}`;
+  if (clickable && value) {
+    return el('button', {
+      class: cls,
+      type: 'button',
+      text: formatCell(value),
+      'aria-label': `${label}, ${formatMonth(month.key)}: ${formatCell(value)}. Show transactions`,
+      'aria-pressed': selected ? 'true' : 'false',
+      onclick: () => {
+        state.cell = selected ? null : { id, label, cats, sign, monthIndex };
+        render();
+      },
+    });
+  }
+  return el('div', { class: cls, text: formatCell(value) });
+}
+
+function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null }) {
+  const months = state.sheet.data.months;
+  const labelChildren = [];
+  if (toggle) {
+    labelChildren.push(
+      el('button', {
+        class: 'chev',
+        type: 'button',
+        'aria-label': `${toggle.open ? 'Collapse' : 'Expand'} ${label}`,
+        'aria-expanded': toggle.open ? 'true' : 'false',
+        text: toggle.open ? '▾' : '▸',
+        onclick: () => {
+          state.collapsed = { ...state.collapsed, [toggle.id]: toggle.open };
+          if (!toggle.open) delete state.collapsed[toggle.id];
+          writeCollapsed(state.collapsed);
+          render();
+        },
+      }),
+    );
+  }
+  labelChildren.push(el('span', { text: label }));
+  if (note) labelChildren.push(el('span', { class: 'tag tag--none', text: note }));
   return el(
     'div',
-    { class: `tile${extraClass ? ` ${extraClass}` : ''}` },
-    el('div', { class: 'tile-label', text: label }),
-    el('div', { class: 'tile-value', text: value }),
-    el('div', { class: 'tile-meta', text: meta }),
+    { class: `sh-row sh-row--${cls}` },
+    el('div', { class: 'sh-lbl' }, labelChildren),
+    ...values.map((value, i) => valueCell({ value, monthIndex: i, month: months[i], id, cats, sign, label, clickable: Boolean(cats) })),
   );
 }
 
-function renderActivityTiles(data) {
-  const currency = data.currency;
-  const inCount = data.transactions.filter((t) => t.amount >= 0).length;
-  const outCount = data.transactions.length - inCount;
-  const closingLabel = data.closingIsCurrent ? 'Balance now' : 'Month-end balance';
-  let closingMeta;
-  if (data.closingBalance == null) closingMeta = data.account.error ? 'Balance unavailable' : 'No balance reported';
-  else {
-    closingMeta = `Opened at ${formatMoney(data.openingBalance, currency)}`;
-    closingMeta += data.closingIsCurrent ? ' · month in progress' : ` · closed ${formatDay(data.period.to, { weekday: false })}`;
+function sectionRow(label) {
+  const months = state.sheet.data.months;
+  return el('div', { class: 'sh-row sh-row--sec' }, el('div', { class: 'sh-lbl', text: label }), ...months.map((month) => el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` })));
+}
+
+function renderSheet() {
+  const data = state.sheet.data;
+  sheetEl.style.setProperty('--cols', String(data.months.length));
+  const anyPositive = (values) => values.some((v) => v > 0);
+  const rows = [];
+
+  rows.push(
+    el(
+      'div',
+      { class: 'sh-row sh-row--head' },
+      el('div', { class: 'sh-lbl', text: 'Category' }),
+      ...data.months.map((month) =>
+        el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` }, formatMonth(month.key, { short: true }), month.current ? el('span', { class: 'sh-so-far', text: 'so far' }) : null),
+      ),
+    ),
+  );
+
+  rows.push(sectionRow('Income'));
+  for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in' }));
+  rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null }));
+  rows.push(sheetRow({ label: 'Total income', values: data.income.total, cls: 'tot' }));
+
+  rows.push(sectionRow('Outgoings'));
+  for (const row of data.outgoings.rows) {
+    if (row.subs) {
+      const open = !state.collapsed[row.id];
+      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'par', cats: row.subs.map((sub) => sub.id), sign: 'out', toggle: { id: row.id, open } }));
+      if (open) for (const sub of row.subs) rows.push(sheetRow({ id: `out:${sub.id}`, label: sub.label, values: sub.values, cls: 'sub', cats: [sub.id], sign: 'out' }));
+    } else {
+      rows.push(sheetRow({ id: `out:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'out' }));
+    }
   }
-  activityTilesEl.replaceChildren(
-    statTile('Money in', formatMoney(data.income, currency), plural(inCount, 'payment')),
-    statTile('Money out', formatMoney(data.outgoings, currency), plural(outCount, 'payment')),
-    statTile('Net', formatSigned(data.net, currency), data.net >= 0 ? 'More in than out' : 'More out than in'),
-    statTile(closingLabel, formatMoney(data.closingBalance, currency), closingMeta),
-  );
-  fitTileValues(activityTilesEl);
+  rows.push(sheetRow({ id: 'out:none', label: 'Uncategorised', values: data.outgoings.uncategorised, cls: 'cat', cats: [null], sign: 'out', note: anyPositive(data.outgoings.uncategorised) ? 'tap to sort' : null }));
+  rows.push(sheetRow({ label: 'Total outgoings', values: data.outgoings.total, cls: 'tot' }));
+  rows.push(sheetRow({ label: 'Net', values: data.net, cls: 'net' }));
+
+  rows.push(sectionRow('Transfers'));
+  rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
+  rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
+
+  rows.push(sectionRow('Balance'));
+  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
+
+  sheetEl.replaceChildren(...rows);
+
+  // On narrow screens only a couple of months fit: start at the latest one, and stay put on later re-renders.
+  if (state.sheet.key !== scrolledSheet) {
+    scrolledSheet = state.sheet.key;
+    sheetWrapEl.scrollLeft = sheetWrapEl.scrollWidth;
+  }
 }
 
-function renderTransactions(data) {
-  if (data.transactions.length === 0) {
-    activityListEl.replaceChildren(el('p', { class: 'txns-empty', text: 'No transactions in this period.' }));
+function renderSheetSkeleton() {
+  sheetEl.style.setProperty('--cols', String(SHEET_MONTHS));
+  const rows = [];
+  for (let r = 0; r < 12; r += 1) {
+    rows.push(
+      el(
+        'div',
+        { class: `sh-row ${r === 0 ? 'sh-row--head' : 'sh-row--cat'}`, 'aria-hidden': 'true' },
+        el('div', { class: 'sh-lbl' }, el('span', { class: 'skeleton', text: 'Category name' })),
+        ...Array.from({ length: SHEET_MONTHS }, () => el('div', { class: 'sh-cell' }, el('span', { class: 'skeleton', text: '0,000.00' }))),
+      ),
+    );
+  }
+  sheetEl.replaceChildren(...rows);
+}
+
+function cellTransactions() {
+  const { cell } = state;
+  const data = state.sheet.data;
+  if (!cell || !data) return [];
+  const month = data.months[cell.monthIndex];
+  if (!month) return [];
+  return data.transactions.filter((t) => t.month === month.key && cell.cats.includes(t.category) && (cell.sign === 'in' ? t.amount >= 0 : t.amount < 0));
+}
+
+function renderDrill() {
+  const { cell } = state;
+  const data = state.sheet.data;
+  if (!cell || !data) {
+    drillEl.hidden = true;
+    drillEl.replaceChildren();
     return;
   }
-  const shown = state.activity.showAll ? data.transactions : data.transactions.slice(0, TRANSACTIONS_PAGE);
-  const nodes = [];
-  let lastDate = null;
-  for (const t of shown) {
-    if (t.date !== lastDate) {
-      nodes.push(el('h3', { class: 'txn-date', text: formatDay(t.date) }));
-      lastDate = t.date;
-    }
+  const month = data.months[cell.monthIndex];
+  const list = cellTransactions();
+  const total = list.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const rows = list.map((t) => {
     const meta = [];
     if (t.pending) meta.push(el('span', { class: 'badge badge--warning', text: 'Pending' }));
-    if (t.category) meta.push(el('span', { text: t.category }));
-    if (t.merchant && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
-    nodes.push(
-      el(
-        'div',
-        { class: 'txn' },
-        el('div', { class: 'txn-main' }, el('div', { class: 'txn-desc', text: t.merchant || t.description || 'Transaction' }), el('div', { class: 'row-meta' }, meta)),
-        el('div', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount, t.currency || data.currency) }),
-      ),
+    if (t.merchant && t.description && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
+    return el(
+      'button',
+      { class: 'txn', type: 'button', 'aria-label': `Change category for ${t.merchant || t.description}`, onclick: () => openCatPicker(t) },
+      el('span', { class: 'txn-date', text: formatDay(t.date, { weekday: false }) }),
+      el('span', { class: 'txn-main' }, el('span', { class: 'txn-desc', text: t.merchant || t.description || 'Transaction' }), el('span', { class: 'row-meta' }, meta)),
+      el('span', { class: `tag${t.category ? '' : ' tag--none'}`, text: t.categoryLabel }),
+      el('span', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount, t.currency || data.currency) }),
     );
-  }
-  if (shown.length < data.transactions.length) {
-    nodes.push(
-      el(
-        'div',
-        { class: 'txns-more' },
-        el('button', {
-          class: 'btn btn--ghost',
-          type: 'button',
-          text: `Show all ${data.transactions.length} transactions`,
-          onclick: () => {
-            state.activity.showAll = true;
-            render();
-          },
-        }),
-      ),
-    );
-  }
-  activityListEl.replaceChildren(...nodes);
+  });
+  drillEl.replaceChildren(
+    el(
+      'div',
+      { class: 'txns-head' },
+      el('span', { class: 'txns-head-title' }, el('h2', { text: `${cell.label} · ${formatMonth(month.key)}` }), el('span', { class: 'group-count', text: plural(list.length, 'transaction') })),
+      el('span', { class: 'txns-head-actions' }, el('span', { class: 'group-total', text: formatMoney(total, data.currency) }), el('button', { class: 'link-btn', type: 'button', text: 'Close', onclick: () => { state.cell = null; render(); } })),
+    ),
+    ...(rows.length ? rows : [el('p', { class: 'txns-empty', text: 'No transactions here.' })]),
+    el('div', { class: 'txns-foot', text: 'Tap a transaction to change its category. "Always for" a merchant files it the same way in every month.' }),
+  );
+  drillEl.hidden = false;
 }
 
 function renderAccountsScreen() {
   const account = selectedAccount();
   renderPicker(account);
   renderPeriodPicker(account);
+  sheetNoteEl.hidden = true;
 
   if (!state.data) {
     renderActivityHead(null);
-    activityTilesEl.replaceChildren(...(state.loading ? [skeletonTile(), skeletonTile(), skeletonTile(), skeletonTile()] : []));
-    activityListEl.replaceChildren();
+    if (state.loading) renderSheetSkeleton();
+    else sheetEl.replaceChildren();
+    drillEl.hidden = true;
     return;
   }
   if (!account) {
     renderActivityHead(null);
-    activityTilesEl.replaceChildren(
-      el('div', { class: 'tile tile--empty' }, el('div', { class: 'tile-value', text: 'No accounts connected yet.' }), el('div', { class: 'tile-meta', text: 'Connect a bank in Lunch Flow and refresh this page.' })),
-    );
-    activityListEl.replaceChildren();
+    sheetEl.replaceChildren(el('div', { class: 'txns-empty', text: 'No accounts connected yet. Connect a bank in Lunch Flow and refresh this page.' }));
+    drillEl.hidden = true;
     return;
   }
 
-  const activity = state.activity;
-  const current = activity.data && String(activity.data.account.id) === String(account.id) ? activity.data : null;
-  renderActivityHead(account);
+  const sheet = state.sheet;
+  const current = sheet.data && String(sheet.data.account.id) === String(account.id) ? sheet.data : null;
+  renderActivityHead(account, current);
   if (current) {
-    renderActivityTiles(current);
-    renderTransactions(current);
-  } else if (activity.loading) {
-    activityTilesEl.replaceChildren(skeletonTile(), skeletonTile(), skeletonTile(), skeletonTile());
-    activityListEl.replaceChildren(
-      ...[0, 1, 2, 3].map(() =>
-        el('div', { class: 'txn' }, el('div', { class: 'txn-main' }, el('div', { class: 'txn-desc skeleton', text: 'Merchant name' })), el('div', { class: 'txn-amount skeleton', text: '000.00' })),
-      ),
-    );
+    renderSheet();
+    renderDrill();
+    sheetNoteEl.hidden = false;
+  } else if (sheet.loading) {
+    renderSheetSkeleton();
+    drillEl.hidden = true;
   } else {
-    activityTilesEl.replaceChildren();
-    activityListEl.replaceChildren();
+    sheetEl.replaceChildren();
+    drillEl.hidden = true;
   }
 }
+
+// ---------- pinning ----------
+
+async function togglePin(account) {
+  const id = String(account.id);
+  const next = cloneSettings();
+  const entry = { ...(next.accounts[id] || {}) };
+  if (entry.pinned) delete entry.pinned;
+  else entry.pinned = Date.now();
+  if (Object.keys(entry).length > 0) next.accounts[id] = entry;
+  else delete next.accounts[id];
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    state.error = err && err.message ? err.message : 'Could not save.';
+  }
+  render();
+}
+
+// ---------- category picker ----------
+
+function catPickerGroups(txn) {
+  const cats = state.sheet.data.categories;
+  const groups = [];
+  if (txn.amount >= 0) groups.push({ label: 'Income', items: cats.income });
+  else {
+    for (const entry of cats.outgoings) groups.push({ label: entry.label, items: entry.subs || [{ id: entry.id, label: entry.label }] });
+  }
+  groups.push({ label: 'Not counted', items: [{ id: TRANSFER, label: 'Transfer between my accounts' }, { id: '', label: 'Uncategorised' }] });
+  return groups;
+}
+
+function renderCatPickerGroups() {
+  const { txn, choice } = state.catPicker;
+  catpickerGroups.replaceChildren(
+    ...catPickerGroups(txn).map((group) =>
+      el(
+        'div',
+        { class: 'optgroup' },
+        el('span', { class: 'optlabel', text: group.label }),
+        el(
+          'div',
+          { class: 'opts' },
+          group.items.map((item) =>
+            el('button', {
+              class: 'opt',
+              type: 'button',
+              text: item.label,
+              'aria-pressed': choice === item.id ? 'true' : 'false',
+              onclick: () => {
+                state.catPicker.choice = item.id;
+                renderCatPickerGroups();
+              },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function openCatPicker(txn) {
+  if (typeof catpickerEl.showModal !== 'function') return;
+  state.catPicker = { txn, choice: txn.category || '' };
+  catpickerTitle.textContent = txn.merchant || txn.description || 'Transaction';
+  const currency = txn.currency || state.sheet.data.currency;
+  catpickerSub.textContent = `${formatDay(txn.date)} · ${formatSigned(txn.amount, currency)}${txn.description && txn.description !== txn.merchant ? ` · ${txn.description}` : ''}`;
+  renderCatPickerGroups();
+  const merchant = txn.merchantKey;
+  scopeMerchantLabel.textContent = merchant ? `Always for ${txn.merchant || txn.description}` : 'Always for this merchant';
+  scopeMerchant.disabled = !merchant;
+  scopeMerchant.checked = Boolean(merchant);
+  scopeOne.checked = !merchant;
+  catpickerError.hidden = true;
+  catpickerError.textContent = '';
+  catpickerHint.textContent =
+    state.settings.persistent === true
+      ? 'Saved for every device you open this page on.'
+      : 'Saved in this browser only. To share across devices, add Upstash Redis under Storage in your Vercel project.';
+  catpickerSave.disabled = false;
+  catpickerEl.showModal();
+}
+
+function closeCatPicker() {
+  state.catPicker = null;
+  if (catpickerEl.open) catpickerEl.close();
+}
+
+async function submitCatPicker(event) {
+  event.preventDefault();
+  const picker = state.catPicker;
+  if (!picker) return;
+  const { txn, choice } = picker;
+  const next = cloneSettings();
+  if (scopeMerchant.checked && txn.merchantKey) {
+    if (choice) next.rules[txn.merchantKey] = choice;
+    else delete next.rules[txn.merchantKey];
+    // A per-transaction choice would still win; clear it so the merchant rule applies here too.
+    delete next.transactions[txn.key];
+  } else if (choice) next.transactions[txn.key] = choice;
+  else delete next.transactions[txn.key];
+
+  catpickerSave.disabled = true;
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    catpickerError.textContent = err && err.message ? err.message : 'Could not save.';
+    catpickerError.hidden = false;
+    catpickerSave.disabled = false;
+    return;
+  }
+  closeCatPicker();
+  ensureSheet({ force: true });
+}
+
+catpickerForm.addEventListener('submit', submitCatPicker);
+catpickerCancel.addEventListener('click', closeCatPicker);
+catpickerEl.addEventListener('close', () => {
+  state.catPicker = null;
+});
 
 // ---------- notices, header, gate ----------
 
@@ -705,10 +958,10 @@ function renderNotice() {
     kind = 'critical';
     title = 'Could not load balances.';
     detail = error;
-  } else if (onAccounts && state.activity.error) {
-    kind = state.activity.data ? 'warning' : 'critical';
-    title = state.activity.data ? 'Could not refresh the transactions.' : 'Could not load the transactions.';
-    detail = state.activity.error;
+  } else if (onAccounts && state.sheet.error) {
+    kind = state.sheet.data ? 'warning' : 'critical';
+    title = state.sheet.data ? 'Could not refresh the sheet.' : 'Could not load the sheet.';
+    detail = state.sheet.error;
   } else if (error && data) {
     kind = 'warning';
     title = 'Could not refresh.';
@@ -730,10 +983,7 @@ function renderNotice() {
     return;
   }
   noticeEl.className = `notice notice--${kind}`;
-  noticeEl.replaceChildren(
-    el('span', { class: 'notice-icon', 'aria-hidden': 'true' }),
-    el('div', {}, el('strong', { text: title }), ' ', detail),
-  );
+  noticeEl.replaceChildren(el('span', { class: 'notice-icon', 'aria-hidden': 'true' }), el('div', {}, el('strong', { text: title }), ' ', detail));
   noticeEl.hidden = false;
 }
 
@@ -743,8 +993,8 @@ function renderUpdated() {
     return;
   }
   const onAccounts = state.route.screen === 'accounts';
-  const busy = state.loading || (onAccounts && state.activity.loading);
-  const stamp = onAccounts && state.activity.data ? state.activity.data.fetchedAt : state.data ? state.data.fetchedAt : null;
+  const busy = state.loading || (onAccounts && state.sheet.loading);
+  const stamp = onAccounts && state.sheet.data ? state.sheet.data.fetchedAt : state.data ? state.data.fetchedAt : null;
   if (!stamp) {
     updatedEl.textContent = busy ? 'Loading…' : '';
     return;
@@ -756,17 +1006,9 @@ function renderUpdated() {
 function renderGate() {
   const gate = state.gate;
   if (gate.kind === 'unconfigured') {
-    gateEl.replaceChildren(
-      el('div', { class: 'gate' }, el('h2', { text: 'Password not set' }), el('p', { text: gate.message })),
-    );
+    gateEl.replaceChildren(el('div', { class: 'gate' }, el('h2', { text: 'Password not set' }), el('p', { text: gate.message })));
   } else {
-    const input = el('input', {
-      id: 'password',
-      type: 'password',
-      autocomplete: 'current-password',
-      placeholder: 'Password',
-      required: true,
-    });
+    const input = el('input', { id: 'password', type: 'password', autocomplete: 'current-password', placeholder: 'Password', required: true });
     const form = el(
       'form',
       {
@@ -783,7 +1025,6 @@ function renderGate() {
       },
       el('h2', { text: 'Enter the password' }),
       el('p', { text: 'This page shows bank balances, so it is locked with the password set for this deployment.' }),
-      // Hidden username lets password managers file the entry under this site.
       el('input', { type: 'text', name: 'username', autocomplete: 'username', value: 'moneta', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' }),
       el('label', { for: 'password', class: 'sr-only', text: 'Password' }),
       el('div', { class: 'gate-row' }, input, el('button', { class: 'btn', type: 'submit', text: 'Unlock' })),
@@ -798,10 +1039,8 @@ function renderGate() {
 function render() {
   const gated = Boolean(state.gate);
   const onAccounts = state.route.screen === 'accounts';
-  for (const link of navLinks) {
-    link.setAttribute('aria-current', link.dataset.screen === state.route.screen ? 'page' : 'false');
-  }
-  const busy = state.loading || (onAccounts && state.activity.loading);
+  for (const link of navLinks) link.setAttribute('aria-current', link.dataset.screen === state.route.screen ? 'page' : 'false');
+  const busy = state.loading || (onAccounts && state.sheet.loading);
   refreshBtn.hidden = gated;
   refreshBtn.disabled = busy;
   refreshBtn.textContent = busy ? 'Refreshing…' : 'Refresh';
@@ -823,11 +1062,8 @@ function render() {
 
   if (state.data && state.data.ttlSeconds > 0) {
     const minutes = Math.round(state.data.ttlSeconds / 60);
-    cacheHintEl.textContent =
-      minutes >= 1 ? `Data is cached for ${plural(minutes, 'minute')}. Refresh fetches it again.` : 'Refresh fetches the data again.';
-  } else {
-    cacheHintEl.textContent = '';
-  }
+    cacheHintEl.textContent = minutes >= 1 ? `Data is cached for ${plural(minutes, 'minute')}. Refresh fetches it again.` : 'Refresh fetches the data again.';
+  } else cacheHintEl.textContent = '';
 
   if (onAccounts) renderAccountsScreen();
   else renderBalancesScreen();
@@ -856,9 +1092,7 @@ function openEditor(account) {
   editorSub.textContent = `${account.institutionName} · ${reported}`;
 
   const options = [el('option', { value: '', text: `Automatic (${groupLabel(account.autoGroup)})` })];
-  for (const option of (state.data && state.data.groupOptions) || []) {
-    options.push(el('option', { value: option.id, text: option.label }));
-  }
+  for (const option of (state.data && state.data.groupOptions) || []) options.push(el('option', { value: option.id, text: option.label }));
   editorGroup.replaceChildren(...options);
   editorGroup.value = account.settings && account.settings.group ? account.settings.group : '';
   editorBalance.value = (account.settings && account.settings.balance) || 'reported';
@@ -879,16 +1113,17 @@ function closeEditor() {
   if (editorEl.open) editorEl.close();
 }
 
-async function saveSettings(accounts) {
+/** Persist settings: on the server when it has a store, otherwise in this browser. */
+async function saveSettings(next) {
   if (state.settings.persistent === true) {
-    const res = await fetch('/api/settings', { method: 'PUT', headers: apiHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ accounts }) });
+    const res = await apiFetch('/api/settings', { method: 'PUT', body: next });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body && (body.message || body.error)) || `Saving failed with status ${res.status}`);
-    state.settings = { ...state.settings, persistent: body.persistent, kind: body.kind, error: body.error ?? null, accounts: body.accounts };
+    state.settings = { ...state.settings, persistent: body.persistent, kind: body.kind, error: body.error ?? null, accounts: body.accounts || {}, rules: body.rules || {}, transactions: body.transactions || {} };
     return;
   }
-  writeLocalSettings(accounts);
-  state.settings = { ...state.settings, accounts };
+  writeLocalSettings(next);
+  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions };
 }
 
 async function submitEditor(event) {
@@ -896,7 +1131,12 @@ async function submitEditor(event) {
   const account = state.editing;
   if (!account) return;
 
-  const entry = {};
+  const next = cloneSettings();
+  const id = String(account.id);
+  const entry = { ...(next.accounts[id] || {}) };
+  delete entry.group;
+  delete entry.balance;
+  delete entry.limit;
   if (editorGroup.value) entry.group = editorGroup.value;
   const mode = editorBalance.value;
   if (mode === 'negate') entry.balance = 'negate';
@@ -912,14 +1152,12 @@ async function submitEditor(event) {
     entry.balance = 'credit-limit';
     entry.limit = limit;
   }
-
-  const accounts = { ...state.settings.accounts };
-  if (Object.keys(entry).length > 0) accounts[String(account.id)] = entry;
-  else delete accounts[String(account.id)];
+  if (Object.keys(entry).length > 0) next.accounts[id] = entry;
+  else delete next.accounts[id];
 
   editorSave.disabled = true;
   try {
-    await saveSettings(accounts);
+    await saveSettings(next);
   } catch (err) {
     editorError.textContent = err && err.message ? err.message : 'Could not save.';
     editorError.hidden = false;
@@ -927,7 +1165,7 @@ async function submitEditor(event) {
     return;
   }
   closeEditor();
-  state.activity = { ...state.activity, key: null }; // treatments changed: recompute closing balances
+  state.sheet = { ...state.sheet, key: null }; // treatments changed: balances on the sheet must be recomputed
   load();
 }
 
@@ -946,11 +1184,10 @@ editorEl.addEventListener('close', () => {
 
 function handleUnauthorized(res, body, password) {
   if (res.status === 401) {
-    // Wrong or missing password: forget it and ask.
     sessionPassword = '';
     writePassword('');
     state.data = null;
-    state.activity = { key: null, data: null, loading: false, error: null, showAll: false };
+    state.sheet = { key: null, data: null, loading: false, error: null };
     state.gate = { kind: 'password', message: password ? 'Wrong password. Try again.' : '' };
     return true;
   }
@@ -962,6 +1199,17 @@ function handleUnauthorized(res, body, password) {
   return false;
 }
 
+function adoptServerSettings(settings) {
+  state.settings = {
+    persistent: settings.persistent,
+    kind: settings.kind,
+    error: settings.error ?? null,
+    accounts: settings.accounts || {},
+    rules: settings.rules || {},
+    transactions: settings.transactions || {},
+  };
+}
+
 async function load({ refresh = false } = {}) {
   if (state.loading) return;
   state.loading = true;
@@ -969,21 +1217,20 @@ async function load({ refresh = false } = {}) {
   render();
   try {
     const password = sessionPassword || readPassword();
-    const res = await fetch(`/api/balances${refresh ? '?refresh=1' : ''}`, { headers: apiHeaders() });
+    const res = await apiFetch(`/api/balances${refresh ? '?refresh=1' : ''}`);
     const body = await res.json().catch(() => null);
     if (handleUnauthorized(res, body, password)) return;
-    if (!res.ok) {
-      throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
-    }
+    if (!res.ok) throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
     state.gate = null;
     state.data = body;
     if (body.settings) {
       const local = readLocalSettings();
       if (body.settings.persistent === true) {
+        const serverEmpty = settingsEmpty(body.settings);
         // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
-        if (!state.migrated && Object.keys(local).length > 0 && Object.keys(body.settings.accounts || {}).length === 0) {
+        if (!state.migrated && !settingsEmpty(local) && serverEmpty) {
           state.migrated = true;
-          state.settings = { persistent: true, kind: body.settings.kind, error: null, accounts: {} };
+          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {} });
           try {
             await saveSettings(local);
             writeLocalSettings(null);
@@ -992,73 +1239,69 @@ async function load({ refresh = false } = {}) {
           } catch {
             /* keep the local copy; the next save will try again */
           }
-        } else {
-          writeLocalSettings(null);
-        }
+        } else writeLocalSettings(null);
+        adoptServerSettings(body.settings);
+      } else {
+        state.settings = { ...state.settings, persistent: false, kind: body.settings.kind, error: body.settings.error ?? null, ...local };
       }
-      state.settings = {
-        persistent: body.settings.persistent,
-        kind: body.settings.kind,
-        error: body.settings.error ?? null,
-        accounts: body.settings.persistent ? body.settings.accounts || {} : local,
-      };
     }
   } catch (err) {
     state.error = err && err.message ? err.message : 'Unknown error';
   } finally {
     state.loading = false;
     render();
-    ensureActivity();
+    ensureSheet();
   }
 }
 
-async function loadActivity({ account, from, to, key, refresh = false }) {
-  state.activity = { key, data: state.activity.key === key ? state.activity.data : null, loading: true, error: null, showAll: false };
+async function loadSheet({ account, period, key, refresh = false }) {
+  state.sheet = { key, data: state.sheet.key === key ? state.sheet.data : null, loading: true, error: null };
+  if (state.sheet.data === null) state.cell = null;
   render();
   try {
-    const params = new URLSearchParams({ account: String(account.id), from, to });
+    const params = new URLSearchParams({ account: String(account.id), to: period, months: String(SHEET_MONTHS) });
     if (refresh) params.set('refresh', '1');
     const password = sessionPassword || readPassword();
-    const res = await fetch(`/api/activity?${params}`, { headers: apiHeaders() });
+    const res = await apiFetch(`/api/sheet?${params}`);
     const body = await res.json().catch(() => null);
-    if (state.activity.key !== key) return; // the viewer moved on
+    if (state.sheet.key !== key) return; // the viewer moved on
     if (handleUnauthorized(res, body, password)) return;
     if (!res.ok) throw new Error((body && (body.message || body.error)) || `Request failed with status ${res.status}`);
-    state.activity = { key, data: body, loading: false, error: null, showAll: false };
+    state.sheet = { key, data: body, loading: false, error: null };
+    if (state.cell && !cellTransactions().length && !state.sheet.data.months[state.cell.monthIndex]) state.cell = null;
   } catch (err) {
-    if (state.activity.key !== key) return;
-    state.activity = { ...state.activity, loading: false, error: err && err.message ? err.message : 'Unknown error' };
+    if (state.sheet.key !== key) return;
+    state.sheet = { ...state.sheet, loading: false, error: err && err.message ? err.message : 'Unknown error' };
   } finally {
-    if (state.activity.key === key) {
-      state.activity.loading = false;
+    if (state.sheet.key === key) {
+      state.sheet.loading = false;
       render();
     }
   }
 }
 
-/** Load the selected account's activity when the accounts screen needs it. */
-function ensureActivity({ refresh = false, force = false } = {}) {
+/** Load the selected account's sheet when the accounts screen needs it. */
+function ensureSheet({ refresh = false, force = false } = {}) {
   if (state.route.screen !== 'accounts' || !state.data || state.gate) return;
   const account = selectedAccount();
   if (!account) return;
-  const { from, to } = periodRange(state.route.period);
-  const key = `${account.id}|${from}|${to}`;
-  if (!refresh && !force && state.activity.key === key && (state.activity.data || state.activity.loading)) return;
-  loadActivity({ account, from, to, key, refresh });
+  const key = `${account.id}|${state.route.period}|${SHEET_MONTHS}`;
+  if (!refresh && !force && state.sheet.key === key && (state.sheet.data || state.sheet.loading)) return;
+  loadSheet({ account, period: state.route.period, key, refresh });
 }
 
 // ---------- wiring ----------
 
 refreshBtn.addEventListener('click', () => {
   load({ refresh: true });
-  if (state.route.screen === 'accounts') ensureActivity({ refresh: true });
+  if (state.route.screen === 'accounts') ensureSheet({ refresh: true });
 });
 lockBtn.addEventListener('click', () => {
   sessionPassword = '';
   writePassword('');
   state.data = null;
   state.error = null;
-  state.activity = { key: null, data: null, loading: false, error: null, showAll: false };
+  state.sheet = { key: null, data: null, loading: false, error: null };
   state.gate = { kind: 'password', message: '' };
   render();
 });
@@ -1070,16 +1313,18 @@ viewToggleEl.addEventListener('click', (event) => {
   render();
 });
 window.addEventListener('hashchange', () => {
+  const previous = state.route;
   state.route = parseHash();
+  if (previous.accountId !== state.route.accountId || previous.period !== state.route.period) state.cell = null;
   render();
-  ensureActivity();
+  ensureSheet();
 });
 
 setInterval(renderUpdated, 30_000);
 setInterval(() => {
   if (document.visibilityState !== 'visible' || state.gate) return;
   load();
-  if (state.route.screen === 'accounts') ensureActivity({ force: true });
+  if (state.route.screen === 'accounts') ensureSheet({ force: true });
 }, AUTO_RELOAD_MS);
 
 document.addEventListener('visibilitychange', () => {

@@ -7,8 +7,12 @@
  * the current balance: closing = current - (everything after the period).
  */
 
+import { describeCategories, normalizeCategoriesConfig } from './categories.js';
+import { MONTH_RE, buildSheet, monthKey, monthWindow } from './sheet.js';
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const MAX_RANGE_DAYS = 400;
+export const MAX_SHEET_MONTHS = 12;
 
 export class ActivityError extends Error {
   constructor(message, status = 400) {
@@ -85,6 +89,7 @@ export function summarize(transactions, { from, to, currentBalance = null }) {
 export function createActivityService({
   client,
   balances,
+  categories = normalizeCategoriesConfig({}),
   ttlMs = 5 * 60 * 1000,
   now = () => Date.now(),
   logger = console,
@@ -92,6 +97,7 @@ export function createActivityService({
 } = {}) {
   if (!client) throw new Error('A Lunch Flow client is required');
   if (!balances) throw new Error('The balance service is required');
+  const publicCategories = describeCategories(categories);
 
   const cache = new Map(); // key -> { transactions, fetchedAt, expiresAt }
 
@@ -147,8 +153,65 @@ export function createActivityService({
     };
   }
 
+  const pickAccount = (account) => ({
+    id: account.id,
+    name: account.name,
+    institutionName: account.institutionName,
+    institutionLogo: account.institutionLogo,
+    group: account.group,
+    status: account.status,
+    currency: account.currency,
+    balance: account.balance,
+    error: account.error,
+  });
+
+  /** The Accounts sheet: categories by month for one account, ending at month `to` (YYYY-MM). */
+  async function getSheet({ accountId, to = null, months = 6, refresh = false, settings: sent = null } = {}) {
+    const today = isoDate(now());
+    const currentMonth = monthKey(today);
+    if (to != null && to !== '' && !MONTH_RE.test(String(to))) throw new ActivityError('to must be a month in YYYY-MM form');
+    const endKey = to && to < currentMonth ? to : currentMonth;
+    const count = Math.min(Math.max(1, Number.parseInt(months, 10) || 6), MAX_SHEET_MONTHS);
+    const window = monthWindow(endKey, count);
+
+    const snapshot = await balances.getSnapshot({ settings: sent });
+    const account = snapshot.accounts.find((a) => String(a.id) === String(accountId));
+    if (!account) throw new ActivityError('Account not found', 404);
+    const resolved = typeof balances.getResolvedSettings === 'function' ? await balances.getResolvedSettings(sent) : null;
+
+    const from = window[0].from;
+    const lastTo = window[window.length - 1].to;
+    const fetchTo = lastTo > today ? lastTo : today;
+    const { transactions, fetchedAt, cached } = await fetchTransactions(account.id, from, fetchTo, refresh);
+
+    const sheet = buildSheet({
+      accountId: account.id,
+      transactions,
+      months: window,
+      categories,
+      settings: resolved,
+      currentBalance: account.balance ? account.balance.current : null,
+      today,
+      otherAccountNames: snapshot.accounts.filter((a) => String(a.id) !== String(account.id)).map((a) => a.name),
+    });
+    const currency =
+      (account.balance && account.balance.currency) || account.currency || (sheet.transactions[0] && sheet.transactions[0].currency) || null;
+
+    return {
+      account: pickAccount(account),
+      currency,
+      ...sheet,
+      categories: publicCategories,
+      settings: snapshot.settings,
+      fetchedAt,
+      cached,
+      ttlSeconds: Math.round(ttlMs / 1000),
+    };
+  }
+
   return {
     getActivity,
+    getSheet,
     invalidate() {
       cache.clear();
     },
