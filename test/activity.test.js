@@ -139,7 +139,7 @@ test('the API client requests transactions with filters and accepts both field s
   const list = await client.listTransactions(123, { from: '2026-06-01', to: '2026-06-30' });
   assert.equal(calls[0], 'https://api.test/api/v1/accounts/123/transactions?from=2026-06-01&to=2026-06-30&include_pending=true');
   assert.deepEqual(list, [
-    { id: 'txn_1', date: '2026-06-26', amount: -12.5, currency: 'EUR', description: 'Lunch', merchant: 'Cafe', category: null, pending: false },
-    { id: '2', date: '2026-06-25', amount: 1500, currency: 'EUR', description: 'Salary', merchant: null, category: 'Income', pending: true },
+    { id: 'txn_1', date: '2026-06-26', amount: -12.5, currency: 'EUR', description: 'Lunch', merchant: 'Cafe', category: null, pending: false, details: {} },
+    { id: '2', date: '2026-06-25', amount: 1500, currency: 'EUR', description: 'Salary', merchant: null, category: 'Income', pending: true, details: { time: '2026-06-25T09:00:00Z' } },
   ]);
 });

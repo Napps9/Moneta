@@ -24,7 +24,7 @@ test('buildSheet sums into categories and months, rolls subs up into parents, an
     tx('2026-08-03', -40, 'TESCO STORES', { merchant: 'Tesco' }),
     tx('2026-08-10', -30, 'PUREGYM', { merchant: 'PureGym' }),
     tx('2026-08-15', -300, 'POT TRANSFER TO SAVINGS POT'),
-    tx('2026-08-20', -20, 'MYSTERY SHOP', { merchant: 'Mystery Shop' }),
+    tx('2026-08-20', -20, 'MYSTERY SHOP', { merchant: 'Mystery Shop', category: 'Shopping' }),
     tx('2026-09-02', 2650, 'ACME LTD SALARY'),
     tx('2026-09-05', -60, 'TESCO STORES', { merchant: 'Tesco' }),
     tx('2026-09-06', 15, 'FPS CREDIT'),
@@ -68,6 +68,9 @@ test('buildSheet sums into categories and months, rolls subs up into parents, an
   assert.equal(sheet.transactions.length, 8, 'the October payment is outside the window');
   assert.equal(sheet.transactions[0].date, '2026-09-06', 'newest first');
   assert.equal(sheet.uncategorisedCount, 2);
+  const mystery = sheet.transactions.find((t) => t.merchant === 'Mystery Shop');
+  assert.equal(mystery.category, null, '"Shopping" is not a category here');
+  assert.equal(mystery.providerCategory, 'Shopping', 'but what Lunch Flow called it is kept');
   const gym = sheet.transactions.find((t) => t.merchant === 'PureGym');
   assert.equal(gym.category, 'gym');
   assert.equal(gym.categoryLabel, 'Gym');

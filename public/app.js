@@ -56,6 +56,10 @@ const catpickerEl = $('catpicker');
 const catpickerForm = $('catpicker-form');
 const catpickerTitle = $('catpicker-title');
 const catpickerSub = $('catpicker-sub');
+const catpickerDetails = $('catpicker-details');
+const catpickerDl = $('catpicker-dl');
+const catpickerKnow = $('catpicker-know');
+const catpickerLookup = $('catpicker-lookup');
 const catpickerGroups = $('catpicker-groups');
 const scopeMerchant = $('scope-merchant');
 const scopeMerchantLabel = $('scope-merchant-label');
@@ -1008,6 +1012,8 @@ function renderDrill() {
     const meta = [];
     if (t.pending) meta.push(el('span', { class: 'badge badge--warning', text: 'Pending' }));
     if (t.merchant && t.description && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
+    // For anything still unfiled, what Lunch Flow itself called it is often the best clue.
+    if (!t.category && t.providerCategory) meta.push(el('span', { text: `Lunch Flow: ${t.providerCategory}` }));
     if (t.split) meta.push(el('span', { text: `${formatMoney(Math.abs(t.amount), currency)} split: ${t.parts.map((part) => `${part.categoryLabel} ${formatMoney(part.amount, currency)}`).join(' · ')}` }));
     const here = amountIn(t, cell.cats);
     const content = [
@@ -1328,6 +1334,55 @@ splitAdd.addEventListener('click', () => {
   if (selects.length) selects[selects.length - 1].focus();
 });
 
+// How card processors and marketplaces show up on statements, for the "what is this?" moment.
+const PAYMENT_PREFIXES = [
+  [/^sq\s*\*/i, 'Paid through Square, a card reader used by small shops, cafés and market stalls. The name after "SQ *" is the trader; the town is often tacked on the end.'],
+  [/^(paypal|pp)\s*\*/i, 'Paid through PayPal. The name after the star is the seller.'],
+  [/^sumup\s*\*?/i, 'Paid through SumUp, a card reader used by small traders. The name after it is the trader.'],
+  [/^(zettle|iz)\s*\*/i, 'Paid through Zettle (formerly iZettle), a card reader used by small traders.'],
+  [/^sp\s+/i, 'A Shopify web shop. The name after "SP" is the shop.'],
+  [/^tst\s*\*/i, 'Paid through Toast, a till system used by restaurants and bars.'],
+  [/^crv\s*\*/i, 'Paid with a Curve card. The name after "CRV*" is the real merchant.'],
+  [/^(amzn|amazon)/i, 'Amazon: a marketplace order, Prime, or a digital purchase.'],
+  [/^google\s*\*/i, 'A Google purchase: Play Store, YouTube, storage or an app subscription.'],
+  [/^apple\.com\/bill/i, 'An App Store purchase or an Apple subscription.'],
+  [/^(www\.|http)/i, 'An online purchase; the address is the shop.'],
+];
+
+const humanKey = (key) => {
+  const words = key.replace(/[._-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+/** Fill the Details block of the picker with everything known about one transaction. */
+function renderTxnDetails(txn) {
+  const currency = txn.currency || state.sheet.data.currency;
+  const details = txn.details && typeof txn.details === 'object' ? txn.details : {};
+  const rows = [];
+  let when = formatDay(txn.date);
+  if (details.time) {
+    const stamp = new Date(details.time);
+    if (!Number.isNaN(stamp.getTime())) when += ` · ${stamp.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  rows.push(['Date', when]);
+  rows.push(['Amount', formatSigned(txn.amount, currency)]);
+  if (txn.merchant) rows.push(['Merchant', txn.merchant]);
+  if (txn.description && txn.description !== txn.merchant) rows.push(['Description', txn.description]);
+  if (txn.providerCategory) rows.push(['Lunch Flow says', txn.providerCategory]);
+  if (txn.pending) rows.push(['Status', 'Pending']);
+  if (txn.id) rows.push(['Lunch Flow id', txn.id]);
+  for (const [key, value] of Object.entries(details)) if (key !== 'time') rows.push([humanKey(key), String(value)]);
+  catpickerDl.replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })]));
+
+  const text = txn.merchant || txn.description || '';
+  const known = PAYMENT_PREFIXES.find(([re]) => re.test(text) || re.test(txn.description || ''));
+  catpickerKnow.textContent = known ? known[1] : '';
+  catpickerKnow.hidden = !known;
+  const query = text.replace(/^(sq|paypal|pp|sumup|zettle|iz|tst|crv|google)\s*\*\s*/i, '').replace(/^sp\s+/i, '').trim();
+  catpickerLookup.href = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  catpickerLookup.hidden = !query;
+}
+
 /** Open the picker for one transaction, or for a list of them to file together. */
 function openCatPicker(target) {
   if (typeof catpickerEl.showModal !== 'function') return;
@@ -1354,11 +1409,15 @@ function openCatPicker(target) {
     catpickerSub.textContent = `${formatSigned(sum, currency)} in total · ${names.length === 1 ? names[0] : plural(names.length, 'merchant')}`;
     scopeMerchantLabel.textContent = merchantKeys.length === 1 ? `Always for ${names[0]}` : `Always for these ${plural(merchantKeys.length, 'merchant')}`;
     scopeOneLabel.textContent = 'Just these';
+    catpickerDetails.hidden = true;
   } else {
     catpickerTitle.textContent = txn.merchant || txn.description || 'Transaction';
     catpickerSub.textContent = `${formatDay(txn.date)} · ${formatSigned(txn.amount, currency)}${txn.description && txn.description !== txn.merchant ? ` · ${txn.description}` : ''}`;
     scopeMerchantLabel.textContent = merchantKeys.length ? `Always for ${txn.merchant || txn.description}` : 'Always for this merchant';
     scopeOneLabel.textContent = 'Just this one';
+    renderTxnDetails(txn);
+    catpickerDetails.hidden = false;
+    catpickerDetails.open = false;
   }
   const merchant = merchantKeys.length > 0;
   scopeMerchant.disabled = !merchant;

@@ -1,4 +1,39 @@
 import { test } from 'node:test';
+import { normalizeTransaction } from '../src/lunchflow.js';
+
+test('normalizeTransaction keeps the extra fields Lunch Flow sends as details', () => {
+  const txn = normalizeTransaction({
+    id: 9,
+    account_id: 1,
+    date: '2026-06-22T14:03:00Z',
+    amount: '-13.70',
+    currency: 'gbp',
+    merchant_name: 'SQ *TRINDLE STORES',
+    description: 'SQ *TRINDLE STORESRichmond',
+    category: 'Shopping',
+    is_pending: 'true',
+    type: 'card_payment',
+    location: { city: 'Richmond', country: 'GB', geo: { lat: 1, lng: 2 } },
+    tags: ['a', 'b'],
+    empty: '',
+    nothing: null,
+  });
+  assert.equal(txn.date, '2026-06-22');
+  assert.equal(txn.amount, -13.7);
+  assert.equal(txn.currency, 'GBP');
+  assert.equal(txn.merchant, 'SQ *TRINDLE STORES');
+  assert.equal(txn.category, 'Shopping');
+  assert.equal(txn.pending, true);
+  assert.deepEqual(txn.details, {
+    type: 'card_payment',
+    'location.city': 'Richmond',
+    'location.country': 'GB',
+    tags: 'a, b',
+    time: '2026-06-22T14:03:00Z',
+  });
+  assert.deepEqual(normalizeTransaction({ id: 1, date: '2026-06-22', amount: 5 }).details, {}, 'nothing extra, nothing kept');
+  assert.equal(normalizeTransaction({ date: 'nope', amount: 5 }), null);
+});
 import assert from 'node:assert/strict';
 import { LunchFlowError, createLunchFlowClient, normalizeAccount, normalizeBalance } from '../src/lunchflow.js';
 

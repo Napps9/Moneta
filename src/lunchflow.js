@@ -77,6 +77,36 @@ export function normalizeBalance(raw, fallbackCurrency = null) {
  * (`accountId`/`account_id`, `merchant`/`merchant_name`, `isPending`/`pending`),
  * so all of them are accepted. Positive amounts are money in, negative money out.
  */
+const MAPPED_FIELDS = new Set(['id', 'date', 'amount', 'currency', 'description', 'merchant', 'merchant_name', 'merchantName', 'category', 'pending', 'isPending', 'is_pending', 'accountId', 'account_id']);
+const MAX_DETAILS = 30;
+
+/**
+ * Everything else Lunch Flow sent about a transaction, kept as strings so the page can show it
+ * when the merchant text alone does not say what something was. One level of nesting is
+ * flattened ("merchant.logo"), and a time of day is kept as `time` when the date carries one.
+ */
+function extractDetails(raw) {
+  const details = {};
+  let count = 0;
+  const add = (key, value) => {
+    if (count >= MAX_DETAILS || value == null || value === '') return;
+    if (typeof value === 'object') {
+      if (Array.isArray(value)) {
+        if (value.length && value.every((v) => v == null || typeof v !== 'object')) add(key, value.filter((v) => v != null).join(', '));
+        return;
+      }
+      for (const [k, v] of Object.entries(value)) if (v == null || typeof v !== 'object' || Array.isArray(v)) add(`${key}.${k}`, v);
+      return;
+    }
+    details[key] = String(value).slice(0, 200);
+    count += 1;
+  };
+  for (const [key, value] of Object.entries(raw)) if (!MAPPED_FIELDS.has(key)) add(key, value);
+  const stamp = str(raw.date);
+  if (stamp.length > 10) details.time = stamp;
+  return details;
+}
+
 export function normalizeTransaction(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const amount = num(raw.amount);
@@ -94,6 +124,7 @@ export function normalizeTransaction(raw) {
     merchant,
     category: str(raw.category) || null,
     pending: pending === true || pending === 'true',
+    details: extractDetails(raw),
   };
 }
 

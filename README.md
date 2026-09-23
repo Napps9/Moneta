@@ -60,6 +60,8 @@ How a transaction is categorised, in order:
 
 To change a category, tap the figure in the sheet, then the transaction. Pick a category and choose **Always for** the merchant (every transaction from that merchant, in every month and account) or **Just this one**. Rules and choices are settings, stored in the same place as the account settings described below.
 
+When the merchant text alone does not say what something was, open the transaction and expand **Details**: the time, everything else Lunch Flow sent about it (its own category, type, location and so on), a plain-English note for card processors such as Square, PayPal, SumUp or Zettle, and a link to look the merchant up on the web. In the list itself, anything still unfiled shows what Lunch Flow called it.
+
 To file several at once, tap **Select** above the list, tick the transactions (or **Select all**), then **Categorise**. The same picker applies the category to all of them, with **Always for these merchants** making a rule per merchant among them, or **Just these** for those transactions only.
 
 One payment that covers several things (rent and bills paid together, say) can be shared out: open it and choose **Split between categories**, then give each part a category and an amount until the whole amount is accounted for. Each part counts towards its own row, the transaction shows as "Split" wherever one of its parts lands, and filing it under a single category again removes the split. Splits apply to that one transaction.

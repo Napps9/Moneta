@@ -74,7 +74,20 @@ export function generateTransactions(account, { days = 150, now = Date.now() } =
     for (let i = 0; i < count; i += 1) {
       const [merchant, category] = MERCHANTS[Math.floor(rand() * MERCHANTS.length)];
       const amount = -money(2.5 + rand() * rand() * 140);
-      out.push({ id: `${account.id}-${iso}-${i}`, accountId: account.id, date: iso, amount, currency: account.currency, merchant, description: merchant.toUpperCase(), category, isPending: back === 0 && i === 0 });
+      out.push({
+        id: `${account.id}-${iso}-${i}`,
+        accountId: account.id,
+        // A time of day, derived without touching rand() so the sequence of sample data stays the same.
+        date: `${iso}T${String(8 + ((day * 7 + i * 3) % 12)).padStart(2, '0')}:${String((day * 13 + i * 17) % 60).padStart(2, '0')}:00Z`,
+        amount,
+        currency: account.currency,
+        merchant,
+        description: merchant.toUpperCase(),
+        category,
+        isPending: back === 0 && i === 0,
+        type: 'card_payment',
+        location: { city: 'London', country: 'GB' },
+      });
     }
     if (profile.salary && day === 25) {
       out.push({ id: `${account.id}-${iso}-salary`, accountId: account.id, date: iso, amount: money(profile.salary + rand() * 120), currency: account.currency, merchant: null, description: profile.incomeLabel || 'SALARY', category: 'Income', isPending: false });

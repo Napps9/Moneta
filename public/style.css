@@ -1236,6 +1236,52 @@ button.sh-cell:focus-visible {
   margin: 0 0 14px;
 }
 
+/* Everything known about one transaction, inside the picker */
+
+.txdetails {
+  margin: -6px 0 14px;
+  font-size: 13px;
+}
+
+.txdetails[hidden] {
+  display: none;
+}
+
+.txdetails summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.txdetails-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 8px 0 0;
+}
+
+.txdetails-list dt {
+  color: var(--ink-3);
+}
+
+.txdetails-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.txdetails-know {
+  margin: 8px 0 0;
+  color: var(--ink-2);
+}
+
+.txdetails-know[hidden] {
+  display: none;
+}
+
+.txdetails-actions {
+  margin: 8px 0 0;
+}
+
 /* Categories added in the app */
 
 .field[hidden],

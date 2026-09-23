@@ -99,6 +99,7 @@ export function buildSheet({
       key,
       merchantKey: merchantKey(txn),
       month: monthKey(txn.date),
+      providerCategory: txn.category || null, // what Lunch Flow itself called it, kept for the details view
       category,
       ...describe(category),
       source,
