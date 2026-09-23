@@ -1337,6 +1337,54 @@ button.sh-cell:focus-visible {
   margin: 8px 0 0;
 }
 
+/* Importing a ledger kept elsewhere */
+
+.ledger-preview {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.ledger-preview[hidden] {
+  display: none;
+}
+
+.ledger-preview p {
+  margin: 0 0 6px;
+}
+
+.ledger-preview details {
+  margin: 6px 0 0;
+}
+
+.ledger-preview summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.ledger-preview ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.check[hidden] {
+  display: none;
+}
+
+.check input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
 /* Categories added in the app */
 
 .field[hidden],

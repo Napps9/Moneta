@@ -195,6 +195,37 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   assert.deepEqual(reclassified.settings.rules, { [merchant.merchantKey]: 'foodout' });
 });
 
+test('POST /api/reconcile matches a ledger to the account’s transactions and proposes choices', async () => {
+  const sheet = await (await fetch(`${base}/api/sheet?account=101&months=3`)).json();
+  const picked = sheet.transactions.filter((t) => t.amount < 0).slice(0, 3);
+  const ledger = {
+    entries: [
+      ...picked.map((t) => ({ month: t.month, kind: 'out', category: 'Weekend', amount: Math.abs(t.amount), label: 'Weekend' })),
+      { month: picked[0].month, kind: 'out', category: 'weekend', amount: 123456.78, label: 'nothing like it' },
+      { month: '2020-01', kind: 'out', category: 'weekend', amount: 1 },
+    ],
+    budgets: { 'out:weekend': 80, 'out:x': -1 },
+  };
+  const res = await fetch(`${base}/api/reconcile?account=101`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ledger }) });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.account.id, 101);
+  assert.equal(body.entries, 5);
+  assert.equal(body.matches.length, 3);
+  assert.ok(Object.values(body.choices).every((c) => c === 'weekend'));
+  assert.equal(body.unmatched.length, 1);
+  assert.equal(body.outside.length, 1);
+  assert.deepEqual(body.budgets, { 'out:weekend': 80 });
+  assert.ok(body.months.count >= 3);
+
+  assert.equal((await fetch(`${base}/api/reconcile?account=101`)).status, 405);
+  const empty = await fetch(`${base}/api/reconcile?account=101`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"ledger":{"entries":[]}}' });
+  assert.equal(empty.status, 400);
+  const noLedger = await fetch(`${base}/api/reconcile?account=101`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(noLedger.status, 400);
+  assert.equal((await fetch(`${base}/api/reconcile?account=999`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ledger }) })).status, 404);
+});
+
 test('categories added in the app show up in the sheet and can be filed under', async () => {
   const res = await fetch(`${base}/api/sheet?account=101&months=2`, {
     method: 'POST',

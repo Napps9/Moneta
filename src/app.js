@@ -199,6 +199,58 @@ export function createSheetHandler({ service = null, auth = null, logger = conso
   };
 }
 
+/**
+ * Handler for `POST /api/reconcile?account=` with `{ ledger, settings? }`: match a ledger kept elsewhere
+ * (see src/ledger.js) to the account's transactions and propose the choices, rules and budgets.
+ * Nothing is saved; the page applies what comes back through the settings.
+ */
+export function createReconcileHandler({ service = null, auth = null, logger = console } = {}) {
+  return async function handleReconcile(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return sendJson(req, res, 405, { error: 'Method not allowed' });
+    }
+    const denied = checkAuth(auth, req);
+    if (denied) {
+      if (denied.status === 401 && denied.attempted) await sleep(300);
+      return sendJson(req, res, denied.status, denied.body);
+    }
+    if (!service) {
+      return sendJson(req, res, 503, { error: 'Lunch Flow API key not configured', message: 'Set LUNCHFLOW_API_KEY and redeploy.' });
+    }
+    let url;
+    try {
+      url = new URL(req.url ?? '/', 'http://localhost');
+    } catch {
+      return sendJson(req, res, 400, { error: 'Bad request' });
+    }
+    const accountId = url.searchParams.get('account');
+    if (!accountId) return sendJson(req, res, 400, { error: 'Bad request', message: 'account is required' });
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch (err) {
+      return sendJson(req, res, 400, { error: 'Bad request', message: err.message });
+    }
+    if (!body || typeof body !== 'object' || !body.ledger || typeof body.ledger !== 'object') {
+      return sendJson(req, res, 400, { error: 'Bad request', message: 'ledger is required: { entries: [{ month, kind, category, amount }] }' });
+    }
+    const settings = body.settings && typeof body.settings === 'object' ? body.settings : null;
+    try {
+      const data = await service.reconcile({ accountId, ledger: body.ledger, settings });
+      return sendJson(req, res, 200, data);
+    } catch (err) {
+      if (err instanceof ActivityError) {
+        return sendJson(req, res, err.status, { error: err.status === 404 ? 'Not found' : 'Bad request', message: err.message });
+      }
+      logger.error?.(`Reconcile request failed: ${err && err.message ? err.message : err}`);
+      const { status, body: payload } = describeUpstreamError(err);
+      return sendJson(req, res, status, payload);
+    }
+  };
+}
+
 /** Handler for `GET /api/activity?account=&from=&to=`: one account's money in, money out and balances for a period. */
 export function createActivityHandler({ service = null, auth = null, logger = console } = {}) {
   return async function handleActivity(req, res) {
@@ -300,6 +352,7 @@ export function createRequestHandler({ service = null, activity = null, auth = n
   const settings = createSettingsHandler({ service, auth, logger });
   const activityHandler = createActivityHandler({ service: activity, auth, logger });
   const sheet = createSheetHandler({ service: activity, auth, logger });
+  const reconcile = createReconcileHandler({ service: activity, auth, logger });
   const health = createHealthHandler({ auth });
 
   async function serveStatic(req, res, pathname) {
@@ -359,6 +412,7 @@ export function createRequestHandler({ service = null, activity = null, auth = n
       if (url.pathname === '/api/settings') return await settings(req, res);
       if (url.pathname === '/api/activity') return await activityHandler(req, res);
       if (url.pathname === '/api/sheet') return await sheet(req, res);
+      if (url.pathname === '/api/reconcile') return await reconcile(req, res);
       if (url.pathname === '/api/health') return health(req, res);
       if (url.pathname.startsWith('/api/')) return sendJson(req, res, 404, { error: 'Not found' });
       return await serveStatic(req, res, url.pathname);

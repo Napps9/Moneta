@@ -74,6 +74,19 @@ Rows with nothing in them across the months in view are hidden, so an account us
 
 New categories can be added in the app: **Add a category** under the sheet, or **New category…** in the picker while filing a transaction. A new one can be its own category, a sub-category of an existing group, a sub-category in a new group, or an income category. They sit on top of the ones in the file, are listed in the same dialog with a Remove link (removing a group leaves its sub-categories as categories of their own; anything filed under a removed category goes back to Uncategorised), and are settings like everything else below.
 
+### Importing a ledger kept elsewhere
+
+If you already keep a spreadsheet with one cell per category and month, each cell the sum of its transactions, **Import a ledger** under the sheet brings the app in line with it. It takes a JSON file with one line per transaction as the spreadsheet recorded it:
+
+```json
+{
+  "entries": [{ "month": "2026-09", "kind": "out", "category": "groceries", "amount": 12.5, "label": "Groceries" }],
+  "budgets": { "out:groceries": 200, "in:salary": 4180 }
+}
+```
+
+Each line is matched to the Lunch Flow transaction with the same month, side and amount that no other line has claimed, over the last twelve months Lunch Flow has, and takes that category as a per-transaction choice. A merchant matched the same way at least twice becomes a rule. The preview says what would change, lists lines that found no transaction, and nothing is saved until you apply. `budgets`, keyed like the forecast rows, can be applied at the same time, which also switches the account to Budget mode. Lines for a group rather than a category, or with a refund inside an outgoing line, are reported and left alone.
+
 `categories.config.js` holds the category tree and the keywords. Edit it to rename, add or remove categories, or to teach it your own merchants. A `MONETA_CATEGORIES` environment variable with the same structure as JSON replaces the file.
 
 ```js

@@ -70,6 +70,8 @@
           <button type="button" class="link-btn" id="empty-toggle"></button>
           <span id="sheet-tools-sep" aria-hidden="true"> · </span>
           <button type="button" class="link-btn" id="newcat-open-sheet">Add a category</button>
+          <span aria-hidden="true"> · </span>
+          <button type="button" class="link-btn" id="ledger-open">Import a ledger</button>
         </p>
         <section id="drill" class="txns" aria-label="Transactions" hidden></section>
       </div>
@@ -187,6 +189,25 @@
           <button type="button" class="btn btn--ghost" id="budget-cancel">Cancel</button>
           <button type="button" class="btn btn--ghost" id="budget-clear">Use automatic</button>
           <button type="submit" class="btn" id="budget-save">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ledger" class="editor" aria-labelledby="ledger-title">
+      <form id="ledger-form" novalidate>
+        <h2 id="ledger-title">Import a ledger</h2>
+        <p id="ledger-sub" class="editor-sub"></p>
+        <p class="editor-explain">
+          A JSON file with one line per transaction as your spreadsheet has it: month, category and amount. Each line is matched to the Lunch Flow transaction with the same month and amount and takes that category. A merchant matched the same way every time becomes a rule, so future months file themselves.
+        </p>
+        <label class="field"><span>Ledger file</span><input id="ledger-file" type="file" accept="application/json,.json" /></label>
+        <div id="ledger-preview" class="ledger-preview" hidden></div>
+        <label class="check" id="ledger-budgets-field" hidden><input type="checkbox" id="ledger-budgets" checked /><span>Also set this account's budgets from the ledger and switch it to Budget mode</span></label>
+        <p id="ledger-error" class="editor-error" role="alert" hidden></p>
+        <p id="ledger-hint" class="editor-hint"></p>
+        <div class="editor-actions">
+          <button type="button" class="btn btn--ghost" id="ledger-cancel">Cancel</button>
+          <button type="submit" class="btn" id="ledger-apply" disabled>Apply</button>
         </div>
       </form>
     </dialog>

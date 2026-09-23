@@ -8,6 +8,7 @@
  */
 
 import { describeCategories, mergeCustomCategories, normalizeCategoriesConfig } from './categories.js';
+import { normalizeLedger, reconcileLedger } from './ledger.js';
 import { MONTH_RE, buildSheet, monthKey, monthWindow } from './sheet.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -214,9 +215,24 @@ export function createActivityService({
     };
   }
 
+  /**
+   * Match a ledger (see ledger.js) against the transactions Lunch Flow has for one account over the
+   * last year, and propose the choices, rules and budgets that would bring the app in line with it.
+   */
+  async function reconcile({ accountId, ledger, settings: sent = null } = {}) {
+    const normalized = normalizeLedger(ledger);
+    if (normalized.entries.length === 0) throw new ActivityError('The ledger has no usable lines: expected { entries: [{ month, kind, category, amount }] }');
+    const sheet = await getSheet({ accountId, months: MAX_SHEET_MONTHS, ahead: 1, settings: sent });
+    const resolved = typeof balances.getResolvedSettings === 'function' ? await balances.getResolvedSettings(sent) : null;
+    const tree = mergeCustomCategories(categories, resolved ? resolved.categories : []);
+    const result = reconcileLedger({ entries: normalized.entries, transactions: sheet.transactions, config: tree });
+    return { account: sheet.account, entries: normalized.entries.length, budgets: normalized.budgets, ...result };
+  }
+
   return {
     getActivity,
     getSheet,
+    reconcile,
     invalidate() {
       cache.clear();
     },

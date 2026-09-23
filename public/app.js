@@ -51,6 +51,18 @@ const budgetHint = $('budget-hint');
 const budgetCancel = $('budget-cancel');
 const budgetClear = $('budget-clear');
 const budgetSave = $('budget-save');
+const ledgerOpen = $('ledger-open');
+const ledgerEl = $('ledger');
+const ledgerForm = $('ledger-form');
+const ledgerSub = $('ledger-sub');
+const ledgerFile = $('ledger-file');
+const ledgerPreview = $('ledger-preview');
+const ledgerBudgetsField = $('ledger-budgets-field');
+const ledgerBudgets = $('ledger-budgets');
+const ledgerError = $('ledger-error');
+const ledgerHint = $('ledger-hint');
+const ledgerCancel = $('ledger-cancel');
+const ledgerApply = $('ledger-apply');
 const drillEl = $('drill');
 const editorEl = $('editor');
 const editorForm = $('editor-form');
@@ -1983,6 +1995,122 @@ budgetCancel.addEventListener('click', () => {
 });
 budgetEl.addEventListener('close', () => {
   state.budget = null;
+});
+
+// ---------- importing a ledger kept elsewhere ----------
+
+let ledgerDraft = null;
+
+function showLedgerError(message) {
+  ledgerError.textContent = message;
+  ledgerError.hidden = false;
+}
+
+function openLedger() {
+  const account = selectedAccount();
+  if (typeof ledgerEl.showModal !== 'function' || !account) return;
+  ledgerDraft = null;
+  ledgerFile.value = '';
+  ledgerSub.textContent = `${account.name} · matched against the last twelve months Lunch Flow has`;
+  ledgerPreview.hidden = true;
+  ledgerPreview.replaceChildren();
+  ledgerBudgetsField.hidden = true;
+  ledgerBudgets.checked = true;
+  ledgerError.hidden = true;
+  ledgerError.textContent = '';
+  ledgerHint.textContent = 'Choose the file to see what would change. Nothing is saved until you apply.';
+  ledgerApply.disabled = true;
+  ledgerEl.showModal();
+}
+
+function renderLedgerPreview(result) {
+  const months = result.months.count ? `${formatMonth(result.months.from)} to ${formatMonth(result.months.to)}` : 'no months at all';
+  const lines = [
+    `Lunch Flow has ${plural(result.transactionsTotal, 'transaction')} for this account, ${months}.`,
+    `${plural(result.matches.length, 'ledger line')} matched a transaction; ${plural(result.changed, 'transaction')} would change category.`,
+    `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.`,
+  ];
+  if (result.unmatched.length) lines.push(`${plural(result.unmatched.length, 'line')} had no transaction of that amount in that month.`);
+  if (result.outside.length) lines.push(`${plural(result.outside.length, 'line')} fall in months Lunch Flow does not have.`);
+  if (result.unassignable.length) lines.push(`${plural(result.unassignable.length, 'line')} cannot be filed: no category of that name here, a group rather than a category, or a refund inside an outgoing line.`);
+  const sample = result.unmatched.slice(0, 10).map((entry) => `${formatMonth(entry.month, { short: true })} · ${entry.label || entry.category || 'no category'} · ${plainNumber.format(Math.abs(entry.amount))}`);
+  ledgerPreview.replaceChildren(
+    ...lines.map((text) => el('p', { text })),
+    sample.length ? el('details', {}, el('summary', { text: `First ${sample.length} unmatched` }), el('ul', {}, sample.map((text) => el('li', { text })))) : null,
+  );
+  ledgerPreview.hidden = false;
+  const hasBudgets = Object.keys(result.budgets || {}).length > 0;
+  ledgerBudgetsField.hidden = !hasBudgets;
+  ledgerHint.textContent = 'Nothing is saved until you apply.';
+  ledgerApply.disabled = result.matches.length === 0 && !hasBudgets;
+}
+
+async function previewLedger() {
+  const file = ledgerFile.files && ledgerFile.files[0];
+  const account = selectedAccount();
+  if (!file || !account) return;
+  ledgerError.hidden = true;
+  ledgerApply.disabled = true;
+  ledgerDraft = null;
+  ledgerPreview.hidden = true;
+  let ledger;
+  try {
+    ledger = JSON.parse(await file.text());
+  } catch {
+    showLedgerError('That file is not JSON.');
+    return;
+  }
+  ledgerHint.textContent = 'Matching against Lunch Flow…';
+  try {
+    const body = { ledger };
+    if (state.settings.persistent !== true) body.settings = settingsPayload();
+    const res = await apiFetch(`/api/reconcile?account=${encodeURIComponent(String(account.id))}`, { method: 'POST', body });
+    const result = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((result && (result.message || result.error)) || `Request failed with status ${res.status}`);
+    ledgerDraft = { ledger, result };
+    renderLedgerPreview(result);
+  } catch (err) {
+    ledgerHint.textContent = '';
+    showLedgerError(err && err.message ? err.message : 'Could not match the ledger.');
+  }
+}
+
+async function applyLedger(event) {
+  event.preventDefault();
+  const account = selectedAccount();
+  if (!ledgerDraft || !account) return;
+  const { result } = ledgerDraft;
+  const next = cloneSettings();
+  for (const [key, category] of Object.entries(result.choices)) {
+    next.transactions[key] = category;
+    delete next.splits[key];
+  }
+  for (const [merchant, category] of Object.entries(result.rules)) next.rules[merchant] = category;
+  if (!ledgerBudgetsField.hidden && ledgerBudgets.checked) {
+    const id = String(account.id);
+    next.budgets[id] = { ...(next.budgets[id] || {}), ...result.budgets };
+    next.forecast[id] = 'budget';
+  }
+  ledgerApply.disabled = true;
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    showLedgerError(err && err.message ? err.message : 'Could not save.');
+    ledgerApply.disabled = false;
+    return;
+  }
+  if (ledgerEl.open) ledgerEl.close();
+  ensureSheet({ force: true });
+}
+
+ledgerOpen.addEventListener('click', openLedger);
+ledgerFile.addEventListener('change', previewLedger);
+ledgerForm.addEventListener('submit', applyLedger);
+ledgerCancel.addEventListener('click', () => {
+  if (ledgerEl.open) ledgerEl.close();
+});
+ledgerEl.addEventListener('close', () => {
+  ledgerDraft = null;
 });
 
 // ---------- notices, header, gate ----------
