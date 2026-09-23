@@ -674,21 +674,38 @@ function valueCell({ value, previous, monthIndex, month, id, cats, sign, label, 
     }
   }
   const cls = `sh-cell${month.current ? ' sh-cell--cur' : ''}${text === '–' ? ' sh-cell--zero' : ''}${selected ? ' sh-cell--sel' : ''}${tone}`;
-  const said = change ? `${label}, ${formatMonth(month.key)}: ${text} on the month before` : `${label}, ${formatMonth(month.key)}: ${formatCell(value)}`;
-  if (clickable && value) {
-    return el('button', {
-      class: cls,
-      type: 'button',
-      text,
-      'aria-label': `${said}. Show transactions`,
-      'aria-pressed': selected ? 'true' : 'false',
-      onclick: () => {
-        state.cell = selected ? null : { id, label, cats, sign, monthIndex };
-        render();
-      },
-    });
+  let said = change ? `${label}, ${formatMonth(month.key)}: ${text} on the month before` : `${label}, ${formatMonth(month.key)}: ${formatCell(value)}`;
+
+  // In Amounts mode every figure carries a marker: more, less or about the same (within 1%) as the month
+  // before. The current month is only part way through, so its markers stay grey.
+  let mark = null;
+  if (!change && previous !== undefined && (value || previous)) {
+    const delta = (value || 0) - (previous || 0);
+    const same = Math.abs(delta) <= Math.max(0.5, 0.01 * Math.abs(previous || 0));
+    const dir = same ? 'flat' : delta > 0 ? 'up' : 'down';
+    const markTone = month.current || dir === 'flat' || !good ? 'flat' : dir === good ? 'good' : 'bad';
+    mark = el('span', { class: `sh-mark sh-mark--${markTone}`, text: dir === 'up' ? '▲' : dir === 'down' ? '▼' : '→', 'aria-hidden': 'true' });
+    said += `, ${dir === 'up' ? 'more than' : dir === 'down' ? 'less than' : 'about the same as'} the month before`;
   }
-  return el('div', { class: cls, text });
+
+  if (clickable && value) {
+    return el(
+      'button',
+      {
+        class: cls,
+        type: 'button',
+        'aria-label': `${said}. Show transactions`,
+        'aria-pressed': selected ? 'true' : 'false',
+        onclick: () => {
+          state.cell = selected ? null : { id, label, cats, sign, monthIndex };
+          render();
+        },
+      },
+      mark,
+      text,
+    );
+  }
+  return el('div', { class: cls, 'aria-label': mark ? said : null }, mark, text);
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

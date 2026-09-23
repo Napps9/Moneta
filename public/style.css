@@ -1017,6 +1017,27 @@ button.sh-cell:focus-visible {
   opacity: 0.18;
 }
 
+/* In each cell: more, less or about the same as the month before. */
+
+.sh-mark {
+  display: inline-block;
+  width: 12px;
+  margin-right: 2px;
+  font-size: 9px;
+  line-height: 1;
+  text-align: center;
+  vertical-align: 1px;
+  color: var(--ink-3);
+}
+
+.sh-row .sh-mark--good {
+  color: var(--good-text);
+}
+
+.sh-row .sh-mark--bad {
+  color: var(--critical);
+}
+
 /* "Change" mode: each figure is the difference from the month before. */
 
 .sh-row .sh-cell.sh-cell--good {
