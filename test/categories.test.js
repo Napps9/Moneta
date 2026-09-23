@@ -40,6 +40,12 @@ test('keywords file merchants automatically, only on the matching side', () => {
   assert.equal(classifyTransaction(txn({ merchant: 'Tesco', amount: 30 }), { config }).category, null, 'a refund from Tesco is not groceries income');
   assert.equal(classifyTransaction(txn({ merchant: null, description: 'PARENTAL LEAVE' }), { config }).category, null, 'whole words only: "rent" does not match "parental"');
   assert.equal(classifyTransaction(txn({ merchant: 'Unknown Shop', description: 'UNKNOWN SHOP 42' }), { config }).category, null);
+  assert.equal(
+    classifyTransaction(txn({ merchant: null, description: 'Interactive BrokerNicholas Apps', amount: -75 }), { config }).category,
+    'investments',
+    'a payee glued to the reference still matches',
+  );
+  assert.equal(classifyTransaction(txn({ merchant: null, description: 'Interactive BrokerNicholas Apps', amount: 75 }), { config }).category, null, 'money in from a broker is not an outgoing');
 });
 
 test('transfers are spotted by keyword or by another account name, and never counted as spending', () => {

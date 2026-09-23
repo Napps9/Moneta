@@ -65,6 +65,11 @@ export default {
         { id: 'tax', label: 'Tax', keywords: ['hmrc'] },
         { id: 'business', label: 'Business Account' },
         { id: 'loanedout', label: 'Loaned Out' },
+        {
+          id: 'investments',
+          label: 'Investments',
+          keywords: ['interactive broker', 'interactive brokers', 'ibkr', 'trading 212', 'trading212', 'hargreaves lansdown', 'vanguard', 'freetrade', 'aj bell', 'nutmeg', 'etoro', 'moneybox', 'wealthify', 'coinbase', 'kraken', 'binance'],
+        },
       ],
     },
     {

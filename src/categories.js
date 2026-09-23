@@ -16,6 +16,7 @@ import { matchesAny } from './groups.js';
 export const TRANSFER = 'transfer';
 
 const norm = (value) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+const splitJoins = (value) => String(value ?? '').replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2');
 const toList = (value) => (Array.isArray(value) ? value.map(norm).filter(Boolean) : []);
 const cleanId = (value) => norm(value).replace(/[^a-z0-9_-]/g, '');
 
@@ -128,7 +129,9 @@ export function classifyTransaction(txn, { config, settings = null, accountId = 
   const byMerchant = settings && settings.rules && key ? settings.rules[key] : null;
   if (byMerchant && allowed(byMerchant)) return { category: byMerchant, source: 'merchant' };
 
-  const haystack = ` ${norm(txn.merchant)} ${norm(txn.description)} `;
+  // Banks often glue the payee and the reference together ("Interactive BrokerNicholas Apps"), so the text is
+  // searched both as it came and with a space at every lower-to-upper-case join.
+  const haystack = ` ${norm(txn.merchant)} ${norm(txn.description)} ${norm(splitJoins(txn.merchant))} ${norm(splitJoins(txn.description))} `;
   if (matchesAny(haystack, config.transferKeywords)) return { category: TRANSFER, source: 'keyword' };
   for (const name of otherAccountNames) {
     const wanted = norm(name);
