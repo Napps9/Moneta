@@ -136,15 +136,17 @@ export function reconcileLedger({ entries, transactions, config = null }) {
     groupFor(entry.month, entry.kind, penceOf(entry.amount)).lines.push(entry);
   }
 
-  // Single matches within a group: each line, in ledger order, takes the transaction it fits best.
+  // Single matches within a group: each line takes the transaction it fits best. A line with a
+  // transaction already filed under its category claims it first; the rest go in ledger order.
   const taken = new Set(); // lines a split takes
   const splitTxns = new Set(); // transactions split into lines
   const single = (group) => {
     const free = new Set(group.txns.filter((txn) => !splitTxns.has(txn)));
     const matched = [];
     const left = [];
-    for (const entry of group.lines) {
-      if (taken.has(entry)) continue;
+    const pending = group.lines.filter((entry) => !taken.has(entry));
+    const exact = (entry) => [...free].some((txn) => txn.category === entry.category);
+    for (const entry of [...pending.filter(exact), ...pending.filter((entry) => !exact(entry))]) {
       let best = null;
       for (const txn of free) if (!best || preference(txn, entry) > preference(best, entry)) best = txn;
       if (!best) {
@@ -217,8 +219,13 @@ export function reconcileLedger({ entries, transactions, config = null }) {
     const byCategory = new Map();
     let lines = 0;
     for (const [group, k] of needs) {
+      // Only a category from outside the app's own filing reserves a line: a keyword, a transfer
+      // match or Lunch Flow's label. A choice or rule may itself be an earlier import's guess.
       const filed = new Map();
-      for (const other of group.txns) if (!splitTxns.has(other) && other.category) filed.set(other.category, (filed.get(other.category) || 0) + 1);
+      for (const other of group.txns) {
+        if (splitTxns.has(other) || !other.category || other.source === 'transaction' || other.source === 'merchant') continue;
+        filed.set(other.category, (filed.get(other.category) || 0) + 1);
+      }
       const ranked = group.lines
         .filter((entry) => !taken.has(entry))
         .map((entry) => {

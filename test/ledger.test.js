@@ -5,7 +5,7 @@ import { normalizeCategoriesConfig } from '../src/categories.js';
 import configFile from '../categories.config.js';
 
 const config = normalizeCategoriesConfig(configFile);
-const txn = (key, month, amount, category, merchantKey) => ({ key, month, amount, category, merchantKey });
+const txn = (key, month, amount, category, merchantKey, source = null) => ({ key, month, amount, category, merchantKey, source });
 
 test('normalizeLedger keeps usable lines and budgets, drops the rest', () => {
   const ledger = normalizeLedger({
@@ -91,8 +91,8 @@ test('reconcileLedger matches lines to transactions by month, side and amount, a
 test('reconcileLedger splits one payment that the ledger has as several lines', () => {
   const transactions = [
     txn('h1', '2026-09', -1150, null, 'heather'),
-    txn('w1', '2026-09', -50, 'water', 'thames water'),
-    txn('u1', '2026-09', -50, null, 'cash'),
+    txn('w1', '2026-09', -50, 'water', 'thames water', 'keyword'),
+    txn('c1', '2026-09', -50, 'energy', 'cash', 'transaction'),
     txn('x1', '2026-09', -300, null, 'other'),
     txn('h2', '2026-08', -1100, null, 'heather'),
     txn('big', '2026-08', -5000, null, 'nothing adds up to it'),
@@ -117,8 +117,10 @@ test('reconcileLedger splits one payment that the ledger has as several lines', 
   const result = reconcileLedger({ entries, transactions, config });
 
   // September has four £50 lines and two £50 transactions, so two go into the split. The water line
-  // stays with the transaction filed as water; of the rest, energy and council tax are in August's
-  // payment too and beat the misc line that is not, even though it comes first in the ledger.
+  // stays with the transaction a keyword filed as water; the energy line does not stay with the one
+  // an earlier choice filed as energy, since that choice may have been an earlier import's guess.
+  // Energy and council tax are in August's payment too and beat the misc line that is not, even
+  // though it comes first in the ledger.
   assert.deepEqual(
     result.splits,
     {
@@ -139,8 +141,8 @@ test('reconcileLedger splits one payment that the ledger has as several lines', 
     },
     'the leftover lines that add up to a payment become its parts, merged by category',
   );
-  assert.equal(result.choices.w1, 'water', 'a line with a transaction of its own still matches it');
-  assert.equal(result.choices.u1, 'miscother', 'the line the split left behind goes to the unfiled transaction');
+  assert.equal(result.choices.w1, 'water', 'a line with a transaction of its own still matches it, whatever the ledger order');
+  assert.equal(result.choices.c1, 'miscother', 'the line the split left behind goes to the transaction whose old choice it displaced');
   assert.equal(result.combined.length, 2);
   assert.equal(result.combined[0].key, 'h1', 'latest month first');
   assert.equal(result.combined[0].lines, 5);
