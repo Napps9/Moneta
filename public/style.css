@@ -739,11 +739,25 @@ a.row-name:focus-visible {
   gap: 10px 16px;
 }
 
+.activity-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+}
+
 .activity-head h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
+}
+
+.activity-balance {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .activity-head span {

@@ -619,10 +619,22 @@ function renderActivityHead(account, sheet) {
     return;
   }
   const currency = sheet ? sheet.currency : account.currency;
+  const balance = account.balance;
   const parts = [account.institutionName];
-  if (currency) parts.push(`figures in ${currency}`);
-  parts.push('month-end balances');
-  activityHeadEl.replaceChildren(el('h2', { text: account.name }), el('span', { text: parts.join(' · ') }));
+  if (balance) parts.push('balance now');
+  if (balance && balance.treatment === 'credit-limit') parts.push(`${formatMoney(balance.available, balance.currency)} left of ${formatMoney(balance.limit, balance.currency)}`);
+  else if (balance && balance.available != null && balance.available !== balance.current) parts.push(`available ${formatMoney(balance.available, balance.currency)}`);
+  if (account.error) parts.push(`balance unavailable: ${account.error}`);
+  if (currency) parts.push(`month-end figures in ${currency}`);
+  activityHeadEl.replaceChildren(
+    el(
+      'div',
+      { class: 'activity-title' },
+      el('h2', { text: account.name }),
+      balance ? el('strong', { class: 'activity-balance', text: formatMoney(balance.current, balance.currency) }) : null,
+    ),
+    el('span', { text: parts.join(' · ') }),
+  );
 }
 
 function cellId(id, monthIndex) {
@@ -700,6 +712,11 @@ function renderSheet() {
     ),
   );
 
+  // Balances first, so they are in view without scrolling past every category.
+  rows.push(sectionRow('Balance'));
+  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
+
   rows.push(sectionRow('Income'));
   for (const row of data.income.rows) rows.push(sheetRow({ id: `in:${row.id}`, label: row.label, values: row.values, cls: 'cat', cats: [row.id], sign: 'in' }));
   rows.push(sheetRow({ id: 'in:none', label: 'Uncategorised', values: data.income.uncategorised, cls: 'cat', cats: [null], sign: 'in', note: anyPositive(data.income.uncategorised) ? 'tap to sort' : null }));
@@ -722,10 +739,6 @@ function renderSheet() {
   rows.push(sectionRow('Transfers'));
   rows.push(sheetRow({ id: 'tr:in', label: 'Transfers in', values: data.transfers.in, cls: 'cat', cats: [TRANSFER], sign: 'in' }));
   rows.push(sheetRow({ id: 'tr:out', label: 'Transfers out', values: data.transfers.out, cls: 'cat', cats: [TRANSFER], sign: 'out' }));
-
-  rows.push(sectionRow('Balance'));
-  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot' }));
-  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot' }));
 
   sheetEl.replaceChildren(...rows);
 
