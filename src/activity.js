@@ -164,6 +164,7 @@ export function createActivityService({
     currency: account.currency,
     balance: account.balance,
     error: account.error,
+    ...(account.details ? { details: account.details } : {}),
   });
 
   /** The Accounts sheet: categories by month for one account, ending at month `to` (YYYY-MM). */

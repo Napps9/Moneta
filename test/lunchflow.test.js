@@ -149,13 +149,21 @@ test('normalizeBalance falls back to available and the given currency', () => {
   assert.deepEqual(normalizeBalance({ current: 0, currency: 'jpy' }), { current: 0, available: null, currency: 'JPY' });
   assert.deepEqual(
     normalizeBalance({ current: 5, currency: 'GBP', last_synced: '2026-09-23T06:15:00Z' }),
-    { current: 5, available: null, currency: 'GBP', asOf: '2026-09-23T06:15:00.000Z' },
-    'when the payload says when it was synced, that is kept',
+    { current: 5, available: null, currency: 'GBP', asOf: '2026-09-23T06:15:00.000Z', details: { last_synced: '2026-09-23T06:15:00Z' } },
+    'when the payload says when it was synced, that is kept, and shown among the details as sent',
   );
   assert.equal(normalizeBalance({ current: 5, currency: 'GBP', updated_at: 1790144100 }).asOf, '2026-09-23T06:15:00.000Z', 'epoch seconds work too');
   assert.equal(normalizeBalance({ current: 5, currency: 'GBP', updated_at: 'yesterday-ish' }).asOf, undefined, 'an unreadable stamp is left out');
   assert.equal(normalizeAccount({ id: 1, syncedAt: '2026-09-23T06:15:00Z' }).syncedAt, '2026-09-23T06:15:00.000Z');
   assert.equal(normalizeAccount({ id: 1 }).syncedAt, undefined);
+  assert.deepEqual(
+    normalizeAccount({ id: 1, name: 'A', status: 'ACTIVE', sync_status: 'ok', connection: { consent_expires: '2026-12-31', deep: { no: 1 } }, tags: ['x', 'y'] }).details,
+    { sync_status: 'ok', 'connection.consent_expires': '2026-12-31', tags: 'x, y' },
+    'whatever else an account payload carries is kept as details',
+  );
+  assert.equal(normalizeAccount({ id: 1 }).details, undefined, 'no details field when there is nothing extra');
+  assert.deepEqual(normalizeBalance({ current: 5, currency: 'GBP', source: 'gocardless' }).details, { source: 'gocardless' });
+  assert.equal(normalizeBalance({ current: 5, currency: 'GBP' }).details, undefined);
 });
 
 test('normalizeAccount requires an id', () => {

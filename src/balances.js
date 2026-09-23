@@ -74,9 +74,9 @@ export function computeTotals(accounts) {
  */
 export function applyTreatment(account, setting = {}) {
   if (!account.balance) return account;
-  const { current, available, currency, asOf } = account.balance;
+  const { current, available, currency, asOf, details } = account.balance;
   const mode = setting.balance ?? 'reported';
-  const stamp = asOf ? { asOf } : {};
+  const stamp = { ...(asOf ? { asOf } : {}), ...(details ? { details } : {}) };
 
   if (mode === 'negate') {
     return { ...account, balance: { current: -current, available, currency, treatment: mode, reported: current, ...stamp } };

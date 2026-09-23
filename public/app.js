@@ -81,6 +81,8 @@ const editorLimit = $('editor-limit');
 const editorExplain = $('editor-explain');
 const editorError = $('editor-error');
 const editorHint = $('editor-hint');
+const editorDetails = $('editor-details');
+const editorDl = $('editor-dl');
 const editorCancel = $('editor-cancel');
 const editorSave = $('editor-save');
 const catpickerEl = $('catpicker');
@@ -2365,6 +2367,21 @@ function openEditor(account) {
   editorTitle.textContent = account.name;
   const reported = account.balance ? `Lunch Flow reports ${formatMoney(account.balance.reported, account.balance.currency)}` : 'No balance available';
   editorSub.textContent = `${account.institutionName} · ${reported}`;
+
+  // Everything Lunch Flow sent about the account and its balance, for when a figure looks stale.
+  const rows = [
+    ['Status', account.status],
+    ['Provider', account.provider || ''],
+    ['Balance synced', account.balance && account.balance.asOf ? `${relativeTime(account.balance.asOf)} (${new Date(account.balance.asOf).toLocaleString()})` : ''],
+    ['Available', account.balance && account.balance.available != null ? formatMoney(account.balance.available, account.balance.currency) : ''],
+    ['Lunch Flow id', String(account.id)],
+  ];
+  for (const [key, value] of Object.entries(account.details || {})) rows.push([humanKey(key), String(value)]);
+  for (const [key, value] of Object.entries((account.balance && account.balance.details) || {})) rows.push([`Balance ${humanKey(key).toLowerCase()}`, String(value)]);
+  const shown = rows.filter(([, value]) => value !== '' && value != null);
+  editorDl.replaceChildren(...shown.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: v })]));
+  editorDetails.hidden = shown.length === 0;
+  editorDetails.open = false;
 
   const options = [el('option', { value: '', text: `Automatic (${groupLabel(account.autoGroup)})` })];
   for (const option of (state.data && state.data.groupOptions) || []) options.push(el('option', { value: option.id, text: option.label }));

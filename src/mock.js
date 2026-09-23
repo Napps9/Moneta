@@ -115,7 +115,8 @@ export function createMockClient({ delayMs = 120, now = () => Date.now() } = {})
   return {
     async listAccounts() {
       await sleep(delayMs);
-      return ACCOUNTS.map(normalizeAccount);
+      // A couple of extra fields, as a real payload has, so the page can show what Lunch Flow reports.
+      return ACCOUNTS.map((account) => normalizeAccount({ ...account, sync_status: account.status === 'ACTIVE' ? 'ok' : 'needs attention', connection: { consent_expires: '2026-12-31' } }));
     },
     async getBalance(accountId) {
       await sleep(delayMs);

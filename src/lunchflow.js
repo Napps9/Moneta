@@ -60,6 +60,7 @@ export function normalizeAccount(raw) {
     throw new LunchFlowError('Account without an id in response', { code: 'bad_response' });
   }
   const syncedAt = syncStamp(raw);
+  const details = extractDetails(raw, ACCOUNT_FIELDS);
   return {
     id,
     name: str(raw.name) || `Account ${id}`,
@@ -69,6 +70,7 @@ export function normalizeAccount(raw) {
     currency: str(raw.currency).toUpperCase() || null,
     status: str(raw.status).toUpperCase() || 'UNKNOWN',
     ...(syncedAt ? { syncedAt } : {}),
+    ...(Object.keys(details).length ? { details } : {}),
   };
 }
 
@@ -87,11 +89,13 @@ export function normalizeBalance(raw, fallbackCurrency = null) {
     throw new LunchFlowError('Balance response did not contain an amount', { code: 'bad_response' });
   }
   const asOf = syncStamp(raw);
+  const details = extractDetails(raw, BALANCE_FIELDS);
   return {
     current,
     available,
     currency: str(raw.currency).toUpperCase() || fallbackCurrency,
     ...(asOf ? { asOf } : {}),
+    ...(Object.keys(details).length ? { details } : {}),
   };
 }
 
@@ -101,14 +105,18 @@ export function normalizeBalance(raw, fallbackCurrency = null) {
  * so all of them are accepted. Positive amounts are money in, negative money out.
  */
 const MAPPED_FIELDS = new Set(['id', 'date', 'amount', 'currency', 'description', 'merchant', 'merchant_name', 'merchantName', 'category', 'pending', 'isPending', 'is_pending', 'accountId', 'account_id']);
+const ACCOUNT_FIELDS = new Set(['id', 'name', 'institution_name', 'institution_logo', 'provider', 'currency', 'status']);
+const BALANCE_FIELDS = new Set(['available', 'current', 'amount', 'balance', 'currency']);
 const MAX_DETAILS = 30;
 
 /**
- * Everything else Lunch Flow sent about a transaction, kept as strings so the page can show it
- * when the merchant text alone does not say what something was. One level of nesting is
- * flattened ("merchant.logo"), and a time of day is kept as `time` when the date carries one.
+ * Everything else Lunch Flow sent about a transaction (or an account, or a balance), kept as
+ * strings so the page can show it: for a transaction, when the merchant text alone does not say
+ * what something was; for an account, to see what Lunch Flow knows about its connection and sync.
+ * One level of nesting is flattened ("merchant.logo"), and a transaction's time of day is kept as
+ * `time` when its date carries one.
  */
-function extractDetails(raw) {
+function extractDetails(raw, mapped = MAPPED_FIELDS) {
   const details = {};
   let count = 0;
   const add = (key, value) => {
@@ -124,9 +132,11 @@ function extractDetails(raw) {
     details[key] = String(value).slice(0, 200);
     count += 1;
   };
-  for (const [key, value] of Object.entries(raw)) if (!MAPPED_FIELDS.has(key)) add(key, value);
-  const stamp = str(raw.date);
-  if (stamp.length > 10) details.time = stamp;
+  for (const [key, value] of Object.entries(raw)) if (!mapped.has(key)) add(key, value);
+  if (mapped === MAPPED_FIELDS) {
+    const stamp = str(raw.date);
+    if (stamp.length > 10) details.time = stamp;
+  }
   return details;
 }
 
