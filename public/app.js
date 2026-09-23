@@ -62,6 +62,9 @@ const ledgerFile = $('ledger-file');
 const ledgerPreview = $('ledger-preview');
 const ledgerBudgetsField = $('ledger-budgets-field');
 const ledgerBudgets = $('ledger-budgets');
+const ledgerRulesField = $('ledger-rules-field');
+const ledgerRules = $('ledger-rules');
+const ledgerRulesLabel = $('ledger-rules-label');
 const ledgerError = $('ledger-error');
 const ledgerHint = $('ledger-hint');
 const ledgerCancel = $('ledger-cancel');
@@ -2065,6 +2068,8 @@ function openLedger() {
   ledgerPreview.replaceChildren();
   ledgerBudgetsField.hidden = true;
   ledgerBudgets.checked = true;
+  ledgerRulesField.hidden = true;
+  ledgerRules.checked = true;
   ledgerError.hidden = true;
   ledgerError.textContent = '';
   ledgerHint.textContent = 'Choose the file to see what would change. Nothing is saved until you apply.';
@@ -2072,7 +2077,22 @@ function openLedger() {
   ledgerEl.showModal();
 }
 
-/** Rules already saved that this import's matches contradict: the merchant now files differently, or not always the same way. */
+/** A category's label in the tree the sheet came with, or its id. */
+function categoryLabel(id) {
+  if (!id) return 'Uncategorised';
+  const tree = currentTree();
+  for (const c of tree.income) if (c.id === id) return c.label;
+  for (const entry of tree.outgoings) {
+    if (entry.id === id) return entry.label;
+    for (const sub of entry.subs || []) if (sub.id === id) return sub.label;
+  }
+  return id;
+}
+
+/**
+ * Rules already saved that this import's matches contradict: the ledger files the merchant
+ * differently, or not always the same way. Each is { merchant, rule, ledger: [categories] }.
+ */
 function staleRules(result) {
   const seen = new Map();
   for (const match of result.matches) {
@@ -2081,7 +2101,9 @@ function staleRules(result) {
     seen.get(match.merchantKey).add(match.category);
   }
   const rules = state.settings.rules || {};
-  return Object.keys(rules).filter((merchant) => seen.has(merchant) && !(seen.get(merchant).size === 1 && seen.get(merchant).has(rules[merchant])));
+  return Object.keys(rules)
+    .filter((merchant) => seen.has(merchant) && !(seen.get(merchant).size === 1 && seen.get(merchant).has(rules[merchant])))
+    .map((merchant) => ({ merchant, rule: rules[merchant], ledger: [...seen.get(merchant)] }));
 }
 
 function renderLedgerPreview(result) {
@@ -2090,7 +2112,7 @@ function renderLedgerPreview(result) {
   const lines = [
     `Lunch Flow has ${plural(result.transactionsTotal, 'transaction')} for this account, ${months}.`,
     `${plural(result.matches.length, 'ledger line')} matched a transaction; ${plural(result.changed, 'transaction')} would change category.`,
-    `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.${stale.length ? ` ${plural(stale.length, 'earlier rule')} the matches contradict would be removed.` : ''}`,
+    `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.${stale.length ? ` ${plural(stale.length, 'rule')} made earlier ${stale.length === 1 ? 'files' : 'file'} a merchant differently from the ledger.` : ''}`,
   ];
   const combined = Array.isArray(result.combined) ? result.combined : [];
   if (combined.length) {
@@ -2109,12 +2131,16 @@ function renderLedgerPreview(result) {
   const splitSample = combined
     .slice(0, 10)
     .map((item) => `${formatMonth(item.month, { short: true })} · ${item.merchant || 'no merchant'} · ${plainNumber.format(Math.abs(item.amount))} = ${item.parts.map((part) => `${part.label} ${plainNumber.format(part.amount)}`).join(' + ')}`);
+  const staleSample = stale.map((item) => `${item.merchant} · here ${categoryLabel(item.rule)} · ledger ${item.ledger.map(categoryLabel).join(', ')}`);
   ledgerPreview.replaceChildren(
     ...lines.map((text) => el('p', { text })),
     splitSample.length ? el('details', {}, el('summary', { text: `First ${splitSample.length} split payments` }), el('ul', {}, splitSample.map((text) => el('li', { text })))) : null,
     sample.length ? el('details', {}, el('summary', { text: `First ${sample.length} unmatched` }), el('ul', {}, sample.map((text) => el('li', { text })))) : null,
+    staleSample.length ? el('details', {}, el('summary', { text: `${plural(staleSample.length, 'rule')} the ledger contradicts` }), el('ul', {}, staleSample.map((text) => el('li', { text })))) : null,
   );
   ledgerPreview.hidden = false;
+  ledgerRulesField.hidden = stale.length === 0;
+  ledgerRulesLabel.textContent = `Also remove ${stale.length === 1 ? 'that rule' : `those ${stale.length} rules`}, so future months follow the ledger`;
   const hasBudgets = Object.keys(result.budgets || {}).length > 0;
   ledgerBudgetsField.hidden = !hasBudgets;
   ledgerHint.textContent = 'Nothing is saved until you apply.';
@@ -2161,7 +2187,7 @@ async function applyLedger(event) {
     next.transactions[key] = category;
     delete next.splits[key];
   }
-  for (const merchant of staleRules(result)) delete next.rules[merchant];
+  if (!ledgerRulesField.hidden && ledgerRules.checked) for (const { merchant } of staleRules(result)) delete next.rules[merchant];
   for (const [merchant, category] of Object.entries(result.rules)) next.rules[merchant] = category;
   for (const [key, parts] of Object.entries(result.splits || {})) {
     next.splits[key] = parts.map((part) => ({ category: part.category, amount: part.amount }));
