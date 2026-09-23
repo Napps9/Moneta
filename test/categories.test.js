@@ -21,7 +21,8 @@ test('the config file builds a tree with parents, subs and plain categories', ()
   assert.deepEqual(tree.income.map((c) => c.label), ['Salary', 'Loan Repayments', 'Misc Income']);
   assert.deepEqual(tree.outgoings.map((c) => c.label), ['Groceries', 'Luxuries', 'Living', 'Health', 'Transport', 'Money', 'Misc']);
   assert.equal(tree.outgoings[0].subs, null, 'Groceries is a plain category');
-  assert.deepEqual(tree.outgoings[3].subs.map((c) => c.label), ['Dentist', 'Gym', 'Doctors', 'Pharmacy', 'Optician']);
+  assert.deepEqual(tree.outgoings[3].subs.map((c) => c.label), ['Dentist', 'Gym', 'Doctors', 'Pharmacy', 'Optician', 'Haircut']);
+  assert.equal(config.leaves.get('haircut').parent, 'health');
   assert.equal(config.leaves.get('gym').parent, 'health');
   assert.equal(config.leaves.get('groceries').parent, null);
   assert.equal(isAssignable(config, 'health'), false, 'a parent is not assignable');

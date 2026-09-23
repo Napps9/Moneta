@@ -44,6 +44,7 @@ export default {
         { id: 'doctors', label: 'Doctors', keywords: ['doctor', 'clinic', 'nhs', 'bupa'] },
         { id: 'pharmacy', label: 'Pharmacy', keywords: ['boots', 'superdrug', 'pharmacy', 'chemist'] },
         { id: 'optician', label: 'Optician', keywords: ['specsavers', 'vision express', 'optician', 'optical'] },
+        { id: 'haircut', label: 'Haircut', keywords: ['haircut', 'barber', 'barbers', 'barbershop', 'hairdresser', 'hairdressers', 'hair salon', 'supercuts', 'toni & guy', 'toni&guy', 'rush hair', 'headmasters'] },
       ],
     },
     {

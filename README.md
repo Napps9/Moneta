@@ -45,7 +45,7 @@ For a finished month the closing balance is derived: the current balance minus e
 
 ## Categories
 
-Every transaction on the Accounts screen lands in a category. Income has Salary, Loan Repayments and Misc Income. Outgoings has Groceries plus the larger categories Luxuries, Living, Health, Transport, Money and Misc, each with sub-categories (Food Out, Rent, Gym, Fuel, Credit Card, Loaned Out, Investments, Phone and so on). A parent row is the sum of its sub-categories and collapses with the arrow next to its name.
+Every transaction on the Accounts screen lands in a category. Income has Salary, Loan Repayments and Misc Income. Outgoings has Groceries plus the larger categories Luxuries, Living, Health, Transport, Money and Misc, each with sub-categories (Food Out, Rent, Gym, Haircut, Fuel, Credit Card, Loaned Out, Investments, Phone and so on). A parent row is the sum of its sub-categories and collapses with the arrow next to its name.
 
 How a transaction is categorised, in order:
 
