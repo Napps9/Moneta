@@ -60,6 +60,8 @@ How a transaction is categorised, in order:
 
 To change a category, tap the figure in the sheet, then the transaction. Pick a category and choose **Always for** the merchant (every transaction from that merchant, in every month and account) or **Just this one**. Rules and choices are settings, stored in the same place as the account settings described below.
 
+To file several at once, tap **Select** above the list, tick the transactions (or **Select all**), then **Categorise**. The same picker applies the category to all of them, with **Always for these merchants** making a rule per merchant among them, or **Just these** for those transactions only.
+
 One payment that covers several things (rent and bills paid together, say) can be shared out: open it and choose **Split between categories**, then give each part a category and an amount until the whole amount is accounted for. Each part counts towards its own row, the transaction shows as "Split" wherever one of its parts lands, and filing it under a single category again removes the split. Splits apply to that one transaction.
 
 Rows with nothing in them across the months in view are hidden, so an account used only for bills shows only bill categories. "Show unused rows" under the sheet brings them back.

@@ -60,6 +60,7 @@ const catpickerGroups = $('catpicker-groups');
 const scopeMerchant = $('scope-merchant');
 const scopeMerchantLabel = $('scope-merchant-label');
 const scopeOne = $('scope-one');
+const scopeOneLabel = $('scope-one-label');
 const catpickerError = $('catpicker-error');
 const catpickerHint = $('catpicker-hint');
 const catpickerCancel = $('catpicker-cancel');
@@ -747,6 +748,7 @@ function valueCell({ value, previous, monthIndex, month, id, cats, sign, label, 
         'aria-pressed': selected ? 'true' : 'false',
         onclick: () => {
           state.cell = selected ? null : { id, label, cats, sign, monthIndex };
+          state.bulk = null;
           render();
         },
       },
@@ -990,11 +992,17 @@ function renderDrill() {
   if (!cell || !data) {
     drillEl.hidden = true;
     drillEl.replaceChildren();
+    state.bulk = null;
     return;
   }
   const month = data.months[cell.monthIndex];
   const list = cellTransactions();
   const total = list.reduce((sum, t) => sum + amountIn(t, cell.cats), 0);
+  // Bulk select: tick several transactions and file them together.
+  const bulk = state.bulk && state.bulk.on ? state.bulk : null;
+  const keys = bulk ? bulk.keys : null;
+  const selected = bulk ? list.filter((t) => keys.has(t.key)) : [];
+  const allSelected = Boolean(bulk) && list.length > 0 && selected.length === list.length;
   const rows = list.map((t) => {
     const currency = t.currency || data.currency;
     const meta = [];
@@ -1002,24 +1010,101 @@ function renderDrill() {
     if (t.merchant && t.description && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
     if (t.split) meta.push(el('span', { text: `${formatMoney(Math.abs(t.amount), currency)} split: ${t.parts.map((part) => `${part.categoryLabel} ${formatMoney(part.amount, currency)}`).join(' · ')}` }));
     const here = amountIn(t, cell.cats);
-    return el(
-      'button',
-      { class: 'txn', type: 'button', 'aria-label': `Change category for ${t.merchant || t.description}`, onclick: () => openCatPicker(t) },
+    const content = [
       el('span', { class: 'txn-date', text: formatDay(t.date, { weekday: false }) }),
       el('span', { class: 'txn-main' }, el('span', { class: 'txn-desc', text: t.merchant || t.description || 'Transaction' }), el('span', { class: 'row-meta' }, meta)),
       el('span', { class: `tag${t.split || t.category ? '' : ' tag--none'}`, text: t.split ? 'Split' : t.categoryLabel }),
       el('span', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount >= 0 ? here : -here, currency) }),
-    );
+    ];
+    if (bulk) {
+      const checked = keys.has(t.key);
+      return el(
+        'label',
+        { class: `txn txn--pick${checked ? ' txn--checked' : ''}` },
+        el('input', {
+          class: 'txn-check',
+          type: 'checkbox',
+          checked: checked ? true : null,
+          'aria-label': `Select ${t.merchant || t.description}`,
+          onchange: (event) => {
+            if (event.target.checked) keys.add(t.key);
+            else keys.delete(t.key);
+            renderDrill();
+          },
+        }),
+        ...content,
+      );
+    }
+    return el('button', { class: 'txn', type: 'button', 'aria-label': `Change category for ${t.merchant || t.description}`, onclick: () => openCatPicker(t) }, ...content);
   });
   drillEl.replaceChildren(
     el(
       'div',
       { class: 'txns-head' },
-      el('span', { class: 'txns-head-title' }, el('h2', { text: `${cell.label} · ${formatMonth(month.key)}` }), el('span', { class: 'group-count', text: plural(list.length, 'transaction') })),
-      el('span', { class: 'txns-head-actions' }, el('span', { class: 'group-total', text: formatMoney(total, data.currency) }), el('button', { class: 'link-btn', type: 'button', text: 'Close', onclick: () => { state.cell = null; render(); } })),
+      el(
+        'span',
+        { class: 'txns-head-title' },
+        el('h2', { text: `${cell.label} · ${formatMonth(month.key)}` }),
+        el('span', { class: 'group-count', text: bulk ? `${selected.length} of ${list.length} selected` : plural(list.length, 'transaction') }),
+      ),
+      el(
+        'span',
+        { class: 'txns-head-actions' },
+        ...(bulk
+          ? [
+              el('button', {
+                class: 'link-btn',
+                type: 'button',
+                text: allSelected ? 'Select none' : 'Select all',
+                onclick: () => {
+                  if (allSelected) keys.clear();
+                  else for (const t of list) keys.add(t.key);
+                  renderDrill();
+                },
+              }),
+              el('button', { class: 'btn btn--small', type: 'button', text: `Categorise ${selected.length}…`, disabled: selected.length === 0, onclick: () => openCatPicker(selected) }),
+              el('button', {
+                class: 'link-btn',
+                type: 'button',
+                text: 'Done',
+                onclick: () => {
+                  state.bulk = null;
+                  renderDrill();
+                },
+              }),
+            ]
+          : [
+              el('span', { class: 'group-total', text: formatMoney(total, data.currency) }),
+              list.length > 1
+                ? el('button', {
+                    class: 'link-btn',
+                    type: 'button',
+                    text: 'Select',
+                    onclick: () => {
+                      state.bulk = { on: true, keys: new Set() };
+                      renderDrill();
+                    },
+                  })
+                : null,
+              el('button', {
+                class: 'link-btn',
+                type: 'button',
+                text: 'Close',
+                onclick: () => {
+                  state.cell = null;
+                  render();
+                },
+              }),
+            ]),
+      ),
     ),
     ...(rows.length ? rows : [el('p', { class: 'txns-empty', text: 'No transactions here.' })]),
-    el('div', { class: 'txns-foot', text: 'Tap a transaction to change its category. "Always for" a merchant files it the same way in every month.' }),
+    el('div', {
+      class: 'txns-foot',
+      text: bulk
+        ? 'Tick the transactions to file together, then Categorise. "Always for" files every merchant among them the same way in every month.'
+        : 'Tap a transaction to change its category. "Always for" a merchant files it the same way in every month.',
+    }),
   );
   drillEl.hidden = false;
 }
@@ -1243,23 +1328,45 @@ splitAdd.addEventListener('click', () => {
   if (selects.length) selects[selects.length - 1].focus();
 });
 
-function openCatPicker(txn) {
+/** Open the picker for one transaction, or for a list of them to file together. */
+function openCatPicker(target) {
   if (typeof catpickerEl.showModal !== 'function') return;
-  const split = Boolean(txn.split) && Array.isArray(txn.parts) && txn.parts.length > 0;
+  const list = Array.isArray(target) ? target : [target];
+  if (list.length === 0) return;
+  const txn = list[0];
+  const bulk = list.length > 1;
+  const split = !bulk && Boolean(txn.split) && Array.isArray(txn.parts) && txn.parts.length > 0;
+  const shared = list.every((t) => (t.category || '') === (txn.category || '')) ? txn.category || '' : '';
   state.catPicker = {
     txn,
-    choice: txn.category || '',
+    list,
+    bulk,
+    choice: shared,
     mode: split ? 'split' : 'one',
     parts: split ? txn.parts.map((part) => ({ category: part.category || '', amount: money2(part.amount) })) : [],
   };
-  catpickerTitle.textContent = txn.merchant || txn.description || 'Transaction';
   const currency = txn.currency || state.sheet.data.currency;
-  catpickerSub.textContent = `${formatDay(txn.date)} · ${formatSigned(txn.amount, currency)}${txn.description && txn.description !== txn.merchant ? ` · ${txn.description}` : ''}`;
-  const merchant = txn.merchantKey;
-  scopeMerchantLabel.textContent = merchant ? `Always for ${txn.merchant || txn.description}` : 'Always for this merchant';
+  const merchantKeys = [...new Set(list.map((t) => t.merchantKey).filter(Boolean))];
+  if (bulk) {
+    const names = [...new Set(list.map((t) => t.merchant || t.description).filter(Boolean))];
+    const sum = list.reduce((acc, t) => acc + t.amount, 0);
+    catpickerTitle.textContent = plural(list.length, 'transaction');
+    catpickerSub.textContent = `${formatSigned(sum, currency)} in total · ${names.length === 1 ? names[0] : plural(names.length, 'merchant')}`;
+    scopeMerchantLabel.textContent = merchantKeys.length === 1 ? `Always for ${names[0]}` : `Always for these ${plural(merchantKeys.length, 'merchant')}`;
+    scopeOneLabel.textContent = 'Just these';
+  } else {
+    catpickerTitle.textContent = txn.merchant || txn.description || 'Transaction';
+    catpickerSub.textContent = `${formatDay(txn.date)} · ${formatSigned(txn.amount, currency)}${txn.description && txn.description !== txn.merchant ? ` · ${txn.description}` : ''}`;
+    scopeMerchantLabel.textContent = merchantKeys.length ? `Always for ${txn.merchant || txn.description}` : 'Always for this merchant';
+    scopeOneLabel.textContent = 'Just this one';
+  }
+  const merchant = merchantKeys.length > 0;
   scopeMerchant.disabled = !merchant;
-  scopeMerchant.checked = Boolean(merchant);
+  scopeMerchant.checked = merchant;
   scopeOne.checked = !merchant;
+  // A split is one transaction's business; with several selected the toggle goes.
+  splitToggle.hidden = bulk;
+  if (splitToggle.nextElementSibling) splitToggle.nextElementSibling.hidden = bulk;
   catpickerError.hidden = true;
   catpickerError.textContent = '';
   catpickerHint.textContent =
@@ -1282,7 +1389,17 @@ async function submitCatPicker(event) {
   if (!picker) return;
   const { txn, choice, mode, parts } = picker;
   const next = cloneSettings();
-  if (mode === 'split') {
+  if (picker.bulk) {
+    for (const t of picker.list) {
+      delete next.splits[t.key];
+      if (scopeMerchant.checked && t.merchantKey) {
+        if (choice) next.rules[t.merchantKey] = choice;
+        else delete next.rules[t.merchantKey];
+        delete next.transactions[t.key];
+      } else if (choice) next.transactions[t.key] = choice;
+      else delete next.transactions[t.key];
+    }
+  } else if (mode === 'split') {
     const clean = parts.filter((part) => Number.isFinite(part.amount) && part.amount > 0).map((part) => ({ category: part.category || null, amount: part.amount }));
     if (clean.length === 0 || Math.abs(splitLeftAmount()) >= 0.005) {
       catpickerError.textContent = 'Share out the whole amount first.';
@@ -1312,6 +1429,7 @@ async function submitCatPicker(event) {
     return;
   }
   closeCatPicker();
+  state.bulk = null;
   ensureSheet({ force: true });
 }
 

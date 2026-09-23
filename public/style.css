@@ -1355,6 +1355,35 @@ button.txn:focus-visible {
   font-size: 12px;
 }
 
+/* Bulk select in the drill-down */
+
+.txn--pick {
+  cursor: pointer;
+}
+
+.txn--checked {
+  background: var(--wash);
+}
+
+.txn-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.btn--small {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Category picker */
 
 .editor--wide {
