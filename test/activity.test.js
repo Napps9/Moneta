@@ -52,11 +52,13 @@ test('validateRange rejects bad input', () => {
 test('the service fetches once per period, derives closing balances and honours settings', async () => {
   const now = () => Date.parse('2026-09-22T12:00:00Z');
   const calls = [];
+  let balanceCalls = 0;
   const client = {
     async listAccounts() {
       return [{ id: 7, name: 'Card', institutionName: 'Bank', institutionLogo: null, provider: 'x', currency: 'GBP', status: 'ACTIVE' }];
     },
     async getBalance() {
+      balanceCalls += 1;
       return { current: 1380.42, available: null, currency: 'GBP' };
     },
     async listTransactions(id, opts) {
@@ -81,6 +83,12 @@ test('the service fetches once per period, derives closing balances and honours 
   const again = await service.getActivity({ accountId: 7, from: '2026-08-01', to: '2026-08-31' });
   assert.equal(again.cached, true);
   assert.equal(calls.length, 1);
+  assert.equal(balanceCalls, 1, 'the balance is cached alongside');
+
+  const refreshed = await service.getSheet({ accountId: 7, refresh: true });
+  assert.equal(refreshed.cached, false);
+  assert.equal(calls.length, 2, 'a refresh fetches the transactions again');
+  assert.equal(balanceCalls, 2, 'and asks Lunch Flow for the balance again too');
 
   const treated = await service.getActivity({
     accountId: 7,

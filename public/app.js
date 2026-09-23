@@ -570,6 +570,7 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
   } else if (account.balance && account.balance.available != null && account.balance.available !== account.balance.current) {
     meta.push(el('span', { text: `Available ${formatMoney(account.balance.available, account.balance.currency)}` }));
   }
+  if (account.balance && account.balance.asOf) meta.push(el('span', { text: `Synced ${relativeTime(account.balance.asOf)}`, title: new Date(account.balance.asOf).toLocaleString() }));
   if (account.error) meta.push(el('span', { class: 'row-error', text: `Balance unavailable: ${account.error}` }));
 
   const amount = account.balance
@@ -755,7 +756,7 @@ function renderActivityHead(account, sheet) {
   const currency = sheet ? sheet.currency : account.currency;
   const balance = account.balance;
   const parts = [account.institutionName];
-  if (balance) parts.push('balance now');
+  if (balance) parts.push(balance.asOf ? `balance as Lunch Flow last synced it, ${relativeTime(balance.asOf)}` : 'balance now');
   if (balance && balance.treatment === 'credit-limit') parts.push(`${formatMoney(balance.available, balance.currency)} left of ${formatMoney(balance.limit, balance.currency)}`);
   else if (balance && balance.available != null && balance.available !== balance.current) parts.push(`available ${formatMoney(balance.available, balance.currency)}`);
   if (account.error) parts.push(`balance unavailable: ${account.error}`);

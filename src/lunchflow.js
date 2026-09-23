@@ -31,6 +31,25 @@ function num(value) {
   return null;
 }
 
+// Field names under which a payload may say when it was last synced with the bank.
+const STAMP_KEYS = [
+  'as_of', 'asOf', 'last_synced', 'lastSynced', 'last_synced_at', 'lastSyncedAt', 'synced_at', 'syncedAt', 'last_sync', 'lastSync',
+  'last_updated', 'lastUpdated', 'last_updated_at', 'lastUpdatedAt', 'updated_at', 'updatedAt',
+  'last_refreshed', 'lastRefreshed', 'last_refreshed_at', 'lastRefreshedAt', 'balance_updated_at', 'balanceUpdatedAt', 'timestamp',
+];
+
+/** When a payload says it was last synced, as an ISO string, whichever of the usual field names it uses; else null. */
+export function syncStamp(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  for (const key of STAMP_KEYS) {
+    const value = raw[key];
+    if (value == null || value === '') continue;
+    const ms = typeof value === 'number' ? (value < 1e12 ? value * 1000 : value) : Date.parse(String(value));
+    if (Number.isFinite(ms) && ms > 0) return new Date(ms).toISOString();
+  }
+  return null;
+}
+
 /** Normalize a raw account object from `GET /accounts`. */
 export function normalizeAccount(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -40,6 +59,7 @@ export function normalizeAccount(raw) {
   if (typeof id !== 'number' && typeof id !== 'string') {
     throw new LunchFlowError('Account without an id in response', { code: 'bad_response' });
   }
+  const syncedAt = syncStamp(raw);
   return {
     id,
     name: str(raw.name) || `Account ${id}`,
@@ -48,6 +68,7 @@ export function normalizeAccount(raw) {
     provider: str(raw.provider) || null,
     currency: str(raw.currency).toUpperCase() || null,
     status: str(raw.status).toUpperCase() || 'UNKNOWN',
+    ...(syncedAt ? { syncedAt } : {}),
   };
 }
 
@@ -65,10 +86,12 @@ export function normalizeBalance(raw, fallbackCurrency = null) {
   if (current === null) {
     throw new LunchFlowError('Balance response did not contain an amount', { code: 'bad_response' });
   }
+  const asOf = syncStamp(raw);
   return {
     current,
     available,
     currency: str(raw.currency).toUpperCase() || fallbackCurrency,
+    ...(asOf ? { asOf } : {}),
   };
 }
 

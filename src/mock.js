@@ -126,7 +126,8 @@ export function createMockClient({ delayMs = 120, now = () => Date.now() } = {})
           code: 'Internal Server Error',
         });
       }
-      return normalizeBalance(raw);
+      // As if the bank was last synced a couple of hours ago.
+      return normalizeBalance({ ...raw, as_of: new Date(now() - 2 * 60 * 60 * 1000).toISOString() });
     },
     async listTransactions(accountId, { from = null, to = null } = {}) {
       await sleep(delayMs);

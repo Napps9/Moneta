@@ -74,19 +74,20 @@ export function computeTotals(accounts) {
  */
 export function applyTreatment(account, setting = {}) {
   if (!account.balance) return account;
-  const { current, available, currency } = account.balance;
+  const { current, available, currency, asOf } = account.balance;
   const mode = setting.balance ?? 'reported';
+  const stamp = asOf ? { asOf } : {};
 
   if (mode === 'negate') {
-    return { ...account, balance: { current: -current, available, currency, treatment: mode, reported: current } };
+    return { ...account, balance: { current: -current, available, currency, treatment: mode, reported: current, ...stamp } };
   }
   if (mode === 'credit-limit' && Number.isFinite(setting.limit)) {
     return {
       ...account,
-      balance: { current: -(setting.limit - current), available: current, currency, treatment: mode, limit: setting.limit, reported: current },
+      balance: { current: -(setting.limit - current), available: current, currency, treatment: mode, limit: setting.limit, reported: current, ...stamp },
     };
   }
-  return { ...account, balance: { current, available, currency, treatment: 'reported', reported: current } };
+  return { ...account, balance: { current, available, currency, treatment: 'reported', reported: current, ...stamp } };
 }
 
 /** Apply grouping, treatments and totals to raw fetched accounts. */
@@ -138,9 +139,11 @@ export function createBalanceService({
     const withBalances = await mapWithConcurrency(accounts, concurrency, async (account) => {
       try {
         const balance = await client.getBalance(account.id);
+        // When Lunch Flow says when it last synced the balance or the account, keep that with the balance.
+        const asOf = balance.asOf || account.syncedAt || null;
         return {
           ...account,
-          balance: { ...balance, currency: balance.currency ?? account.currency },
+          balance: { ...balance, currency: balance.currency ?? account.currency, ...(asOf ? { asOf } : {}) },
           error: null,
         };
       } catch (err) {

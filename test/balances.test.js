@@ -72,6 +72,11 @@ test('snapshot joins balances, sorts accounts and computes totals per currency',
 test('applyTreatment reads the reported number three ways', () => {
   const account = { id: 1, balance: { current: 1380.42, available: null, currency: 'GBP' } };
   assert.deepEqual(applyTreatment(account).balance, { current: 1380.42, available: null, currency: 'GBP', treatment: 'reported', reported: 1380.42 });
+  assert.equal(
+    applyTreatment({ id: 1, balance: { ...account.balance, asOf: '2026-09-23T06:15:00.000Z' } }, { balance: 'negate' }).balance.asOf,
+    '2026-09-23T06:15:00.000Z',
+    'when the balance was synced travels with it through every treatment',
+  );
   assert.deepEqual(applyTreatment(account, { balance: 'negate' }).balance, { current: -1380.42, available: null, currency: 'GBP', treatment: 'negate', reported: 1380.42 });
   assert.deepEqual(applyTreatment(account, { balance: 'credit-limit', limit: 5000 }).balance, {
     current: -3619.58,

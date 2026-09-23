@@ -151,7 +151,7 @@ You can rename groups, reorder them, or add your own (for example a `business` g
 
 ## Option 3: self-hosted
 
-A single Node.js process serves the page and talks to the Lunch Flow API with your API key. The key stays on the server; the browser only talks to this app. Balances are cached for a few minutes so reloading the page does not hammer the API, and the Refresh button forces a new fetch.
+A single Node.js process serves the page and talks to the Lunch Flow API with your API key. The key stays on the server; the browser only talks to this app. Balances are cached for a few minutes so reloading the page does not hammer the API, and the Refresh button forces a new fetch, of the balances and of the sheet alike. When Lunch Flow says when it last synced an account with the bank, that shows next to the balance ("Synced 2 hours ago"). Refresh re-asks Lunch Flow; it cannot make the bank sync happen, so a balance stays as it is until Lunch Flow's next sync.
 
 ### Requirements
 

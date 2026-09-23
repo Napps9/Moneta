@@ -121,7 +121,7 @@ export function createActivityService({
     if (!from && !to) ({ from, to } = defaultRange(today));
     validateRange(from, to, today);
 
-    const snapshot = await balances.getSnapshot({ settings });
+    const snapshot = await balances.getSnapshot({ refresh, settings });
     const account = snapshot.accounts.find((a) => String(a.id) === String(accountId));
     if (!account) throw new ActivityError('Account not found', 404);
 
@@ -175,7 +175,8 @@ export function createActivityService({
     const count = Math.min(Math.max(1, Number.parseInt(months, 10) || 6), MAX_SHEET_MONTHS);
     const window = monthWindow(endKey, count);
 
-    const snapshot = await balances.getSnapshot({ settings: sent });
+    // A refresh re-asks Lunch Flow for the balance as well as the transactions.
+    const snapshot = await balances.getSnapshot({ refresh, settings: sent });
     const account = snapshot.accounts.find((a) => String(a.id) === String(accountId));
     if (!account) throw new ActivityError('Account not found', 404);
     const resolved = typeof balances.getResolvedSettings === 'function' ? await balances.getResolvedSettings(sent) : null;

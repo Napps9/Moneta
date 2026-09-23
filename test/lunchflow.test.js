@@ -147,6 +147,15 @@ test('unexpected response shapes are rejected', async () => {
 test('normalizeBalance falls back to available and the given currency', () => {
   assert.deepEqual(normalizeBalance({ available: '12.50' }, 'CHF'), { current: 12.5, available: 12.5, currency: 'CHF' });
   assert.deepEqual(normalizeBalance({ current: 0, currency: 'jpy' }), { current: 0, available: null, currency: 'JPY' });
+  assert.deepEqual(
+    normalizeBalance({ current: 5, currency: 'GBP', last_synced: '2026-09-23T06:15:00Z' }),
+    { current: 5, available: null, currency: 'GBP', asOf: '2026-09-23T06:15:00.000Z' },
+    'when the payload says when it was synced, that is kept',
+  );
+  assert.equal(normalizeBalance({ current: 5, currency: 'GBP', updated_at: 1790144100 }).asOf, '2026-09-23T06:15:00.000Z', 'epoch seconds work too');
+  assert.equal(normalizeBalance({ current: 5, currency: 'GBP', updated_at: 'yesterday-ish' }).asOf, undefined, 'an unreadable stamp is left out');
+  assert.equal(normalizeAccount({ id: 1, syncedAt: '2026-09-23T06:15:00Z' }).syncedAt, '2026-09-23T06:15:00.000Z');
+  assert.equal(normalizeAccount({ id: 1 }).syncedAt, undefined);
 });
 
 test('normalizeAccount requires an id', () => {
