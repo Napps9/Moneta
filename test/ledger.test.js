@@ -84,4 +84,56 @@ test('reconcileLedger matches lines to transactions by month, side and amount, a
   assert.deepEqual(result.rules, { tfl: 'weekend' }, 'matched three times, always the same way');
   assert.equal(result.changed, 5, 'everything but t1 changes');
   assert.equal(result.matches.length, 6);
+  assert.deepEqual(result.combined, [], 'nothing left over adds up to a transaction');
+  assert.deepEqual(result.splits, {});
+});
+
+test('reconcileLedger splits one payment that the ledger has as several lines', () => {
+  const transactions = [
+    txn('h1', '2026-09', -1250, null, 'heather'),
+    txn('w1', '2026-09', -50, 'water', 'thames water'),
+    txn('x1', '2026-09', -300, null, 'other'),
+    txn('h2', '2026-08', -1100, null, 'heather'),
+    txn('big', '2026-08', -5000, null, 'nothing adds up to it'),
+  ];
+  const entries = normalizeLedger({
+    entries: [
+      { month: '2026-09', kind: 'out', category: 'rent', amount: 800 },
+      { month: '2026-09', kind: 'out', category: 'water', amount: 50, label: 'the real bill' },
+      { month: '2026-09', kind: 'out', category: 'water', amount: 50, label: 'her share' },
+      { month: '2026-09', kind: 'out', category: 'energy', amount: 50 },
+      { month: '2026-09', kind: 'out', category: 'counciltax', amount: 50 },
+      { month: '2026-09', kind: 'out', category: 'groceries', amount: 100 },
+      { month: '2026-09', kind: 'out', category: 'groceries', amount: 50 },
+      { month: '2026-09', kind: 'out', category: 'foodout', amount: 150 },
+      { month: '2026-08', kind: 'out', category: 'rent', amount: 800 },
+      { month: '2026-08', kind: 'out', category: 'groceries', amount: 300 },
+      { month: '2026-08', kind: 'out', category: 'weekend', amount: 33, label: 'fits nothing' },
+    ],
+  }).entries;
+  const result = reconcileLedger({ entries, transactions, config });
+
+  assert.equal(result.choices.w1, 'water', 'a line with a transaction of its own still matches it');
+  assert.deepEqual(
+    result.splits,
+    {
+      h1: [
+        { category: 'rent', amount: 800 },
+        { category: 'groceries', amount: 150 },
+        { category: 'foodout', amount: 150 },
+        { category: 'water', amount: 50 },
+        { category: 'energy', amount: 50 },
+        { category: 'counciltax', amount: 50 },
+      ],
+      h2: [{ category: 'rent', amount: 800 }, { category: 'groceries', amount: 300 }],
+    },
+    'the leftover lines that add up to a payment become its parts, merged by category',
+  );
+  assert.equal(result.combined.length, 2);
+  assert.equal(result.combined[0].key, 'h1', 'largest payment first');
+  assert.equal(result.combined[0].lines, 7);
+  assert.equal(result.combined[0].parts[0].label, 'Rent');
+  assert.deepEqual(result.unmatched.map((entry) => entry.label), ['fits nothing']);
+  assert.equal(result.changed, 2, 'the two splits; the water line confirms what was there');
+  assert.deepEqual(result.rules, {}, 'splits make no rules');
 });

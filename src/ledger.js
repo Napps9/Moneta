@@ -5,9 +5,10 @@
  * Each ledger line is one transaction as the spreadsheet recorded it: month, category, amount. It
  * is matched to a Lunch Flow transaction of the same month, sign and amount that no other line has
  * claimed. The matches become per-transaction choices, and a merchant matched the same way every
- * time becomes a rule, so future months file themselves.
+ * time becomes a rule, so future months file themselves. Lines that together add up to one
+ * transaction nothing else matched (rent and bills paid to one person, say) become a split of it.
  */
-import { isAssignable } from './categories.js';
+import { isAssignable, labelOf } from './categories.js';
 import { normalizeBudget } from './settings.js';
 
 const MAX_ENTRIES = 20000;
@@ -48,10 +49,50 @@ export function normalizeLedger(raw) {
 }
 
 const slot = (month, kind, amount) => `${month}|${kind}|${Math.round(Math.abs(amount) * 100)}`;
+const round2 = (n) => Math.round(n * 100) / 100;
 
 // Which transaction to take when several share a month and amount: one the app already files the same
 // way first (nothing changes), then one still unfiled, then any.
 const preference = (txn, entry) => (txn.category === entry.category ? 2 : 0) + (txn.category == null ? 1 : 0);
+
+const MAX_COMBINED_LINES = 60; // leftover lines in one month and side that a split is looked for among
+const MAX_STATES = 250000; // distinct running totals kept while looking; past this the search gives up
+
+/**
+ * The indices of the most lines among `pence` that add up exactly to `target`, or null when no two or
+ * more do. Each line is used at most once. The running totals reached so far are kept per total, so
+ * the work grows with the target, not with 2^n.
+ */
+function combination(pence, target) {
+  let states = new Map([[0, { count: 0, index: -1, prev: null }]]);
+  for (let i = 0; i < pence.length; i += 1) {
+    const amount = pence[i];
+    if (amount <= 0 || amount > target) continue;
+    const next = new Map(states);
+    for (const [sum, state] of states) {
+      const total = sum + amount;
+      if (total > target) continue;
+      const current = next.get(total);
+      if (!current || current.count < state.count + 1) next.set(total, { count: state.count + 1, index: i, prev: state });
+    }
+    if (next.size > MAX_STATES) return null;
+    states = next;
+  }
+  const hit = states.get(target);
+  if (!hit || hit.count < 2) return null;
+  const chosen = [];
+  for (let state = hit; state.index >= 0; state = state.prev) chosen.push(state.index);
+  return chosen.sort((a, b) => a - b);
+}
+
+/** Whether two lists of parts share out the same amounts to the same categories. */
+function sameParts(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const norm = (list) => list.map((part) => `${part.category ?? ''}|${Math.round(part.amount * 100)}`).sort();
+  const x = norm(a);
+  const y = norm(b);
+  return x.every((value, i) => value === y[i]);
+}
 
 /**
  * Match ledger lines to transactions. `transactions` are sheet transactions (key, month, amount,
@@ -95,6 +136,50 @@ export function reconcileLedger({ entries, transactions, config = null }) {
     matches.push({ key: txn.key, merchantKey: txn.merchantKey || '', month: entry.month, amount: txn.amount, category: entry.category, was: txn.category ?? null });
   }
 
+  // Lines left over in a month may together be one payment: rent and bills paid to one person, say,
+  // which the ledger has line by line. A transaction nothing matched, whose amount is exactly the sum
+  // of some leftover lines on its side, is split into them, taking as many lines as add up. Lines in
+  // the same category merge into one part.
+  const combined = [];
+  const splits = {};
+  const absorbed = new Set();
+  const leftovers = new Map();
+  unmatched.forEach((entry, i) => {
+    const key = `${entry.month}|${entry.kind}`;
+    if (!leftovers.has(key)) leftovers.set(key, []);
+    leftovers.get(key).push(i);
+  });
+  const spare = transactions.filter((txn) => !used.has(txn.key)).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+  for (const txn of spare) {
+    const indexes = (leftovers.get(`${txn.month}|${txn.amount >= 0 ? 'in' : 'out'}`) || []).filter((i) => !absorbed.has(i)).slice(0, MAX_COMBINED_LINES);
+    if (indexes.length < 2) continue;
+    const target = Math.round(Math.abs(txn.amount) * 100);
+    const pence = indexes.map((i) => Math.round(unmatched[i].amount * 100));
+    if (pence.reduce((total, p) => total + p, 0) < target) continue;
+    const chosen = combination(pence, target);
+    if (!chosen) continue;
+    const byCategory = new Map();
+    for (const c of chosen) {
+      const entry = unmatched[indexes[c]];
+      absorbed.add(indexes[c]);
+      byCategory.set(entry.category, round2((byCategory.get(entry.category) || 0) + entry.amount));
+    }
+    const parts = [...byCategory].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+    used.add(txn.key);
+    splits[txn.key] = parts;
+    combined.push({
+      key: txn.key,
+      merchantKey: txn.merchantKey || '',
+      merchant: txn.merchant || txn.description || '',
+      month: txn.month,
+      amount: txn.amount,
+      lines: chosen.length,
+      parts: parts.map((part) => ({ ...part, label: config ? labelOf(config, part.category) : part.category })),
+      was: txn.split ? 'split' : (txn.category ?? null),
+      alike: sameParts(txn.parts, parts),
+    });
+  }
+
   // A merchant matched at least twice, always to the same category, becomes a rule.
   const byMerchant = new Map();
   for (const match of matches) {
@@ -113,11 +198,13 @@ export function reconcileLedger({ entries, transactions, config = null }) {
     matches,
     choices,
     rules,
-    unmatched,
+    combined,
+    splits,
+    unmatched: unmatched.filter((_, i) => !absorbed.has(i)),
     outside,
     unassignable,
     months: { from: months[0] || null, to: months[months.length - 1] || null, count: months.length },
     transactionsTotal: transactions.length,
-    changed: matches.filter((match) => match.was !== match.category).length,
+    changed: matches.filter((match) => match.was !== match.category).length + combined.filter((item) => !item.alike).length,
   };
 }

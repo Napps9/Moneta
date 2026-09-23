@@ -2078,6 +2078,11 @@ function renderLedgerPreview(result) {
     `${plural(result.matches.length, 'ledger line')} matched a transaction; ${plural(result.changed, 'transaction')} would change category.`,
     `${plural(Object.keys(result.rules).length, 'merchant')} matched the same way every time and would become rules.`,
   ];
+  const combined = Array.isArray(result.combined) ? result.combined : [];
+  if (combined.length) {
+    const absorbed = combined.reduce((n, item) => n + item.lines, 0);
+    lines.push(`${plural(combined.length, 'payment')} ${combined.length === 1 ? 'is' : 'are'} entered as several lines in the ledger (${plural(absorbed, 'line')} in all) and would be split the same way here.`);
+  }
   if (result.unmatched.length) lines.push(`${plural(result.unmatched.length, 'line')} had no transaction of that amount in that month.`);
   if (result.outside.length) lines.push(`${plural(result.outside.length, 'line')} fall in months Lunch Flow does not have.`);
   if (result.unassignable.length) lines.push(`${plural(result.unassignable.length, 'line')} cannot be filed: no category of that name here, a group rather than a category, or a refund inside an outgoing line.`);
@@ -2087,15 +2092,19 @@ function renderLedgerPreview(result) {
     lines.push(`${plural(budgetRows.length, 'budget')} come with it${varying ? `, ${varying} of them with months of their own` : ''}.`);
   }
   const sample =result.unmatched.slice(0, 10).map((entry) => `${formatMonth(entry.month, { short: true })} · ${entry.label || entry.category || 'no category'} · ${plainNumber.format(Math.abs(entry.amount))}`);
+  const splitSample = combined
+    .slice(0, 10)
+    .map((item) => `${formatMonth(item.month, { short: true })} · ${item.merchant || 'no merchant'} · ${plainNumber.format(Math.abs(item.amount))} = ${item.parts.map((part) => `${part.label} ${plainNumber.format(part.amount)}`).join(' + ')}`);
   ledgerPreview.replaceChildren(
     ...lines.map((text) => el('p', { text })),
+    splitSample.length ? el('details', {}, el('summary', { text: `First ${splitSample.length} split payments` }), el('ul', {}, splitSample.map((text) => el('li', { text })))) : null,
     sample.length ? el('details', {}, el('summary', { text: `First ${sample.length} unmatched` }), el('ul', {}, sample.map((text) => el('li', { text })))) : null,
   );
   ledgerPreview.hidden = false;
   const hasBudgets = Object.keys(result.budgets || {}).length > 0;
   ledgerBudgetsField.hidden = !hasBudgets;
   ledgerHint.textContent = 'Nothing is saved until you apply.';
-  ledgerApply.disabled = result.matches.length === 0 && !hasBudgets;
+  ledgerApply.disabled = result.matches.length === 0 && combined.length === 0 && !hasBudgets;
 }
 
 async function previewLedger() {
@@ -2139,6 +2148,10 @@ async function applyLedger(event) {
     delete next.splits[key];
   }
   for (const [merchant, category] of Object.entries(result.rules)) next.rules[merchant] = category;
+  for (const [key, parts] of Object.entries(result.splits || {})) {
+    next.splits[key] = parts.map((part) => ({ category: part.category, amount: part.amount }));
+    delete next.transactions[key];
+  }
   if (!ledgerBudgetsField.hidden && ledgerBudgets.checked) {
     const id = String(account.id);
     next.budgets[id] = { ...(next.budgets[id] || {}), ...result.budgets };

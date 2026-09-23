@@ -203,7 +203,7 @@
         <h2 id="ledger-title">Import a ledger</h2>
         <p id="ledger-sub" class="editor-sub"></p>
         <p class="editor-explain">
-          A JSON file with one line per transaction as your spreadsheet has it: month, category and amount. Each line is matched to the Lunch Flow transaction with the same month and amount and takes that category. A merchant matched the same way every time becomes a rule, so future months file themselves.
+          A JSON file with one line per transaction as your spreadsheet has it: month, category and amount. Each line is matched to the Lunch Flow transaction with the same month and amount and takes that category. A merchant matched the same way every time becomes a rule, so future months file themselves. Lines that together add up to one payment, rent and bills paid to one person say, become a split of it.
         </p>
         <label class="field"><span>Ledger file</span><input id="ledger-file" type="file" accept="application/json,.json" /></label>
         <div id="ledger-preview" class="ledger-preview" hidden></div>
