@@ -1012,6 +1012,97 @@ button.sh-cell:focus-visible {
   line-height: 1.5;
 }
 
+/* Splitting one transaction between categories */
+
+.optgroups[hidden],
+.scope[hidden],
+.split[hidden] {
+  display: none;
+}
+
+.split {
+  margin-bottom: 16px;
+}
+
+.split-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.split-row select,
+.split-row input {
+  font: inherit;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--page);
+  color: var(--ink);
+}
+
+.split-row input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.split-row select:focus-visible,
+.split-row input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.split-remove {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.split-remove:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.split-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.split-left--over {
+  color: var(--critical);
+}
+
+.editor-toggle {
+  margin: 0 0 14px;
+}
+
+@media (max-width: 600px) {
+  .split-row {
+    grid-template-columns: minmax(0, 1fr) 96px 32px;
+  }
+}
+
 /* Transactions behind a cell */
 
 .txns {

@@ -58,6 +58,8 @@ How a transaction is categorised, in order:
 
 To change a category, tap the figure in the sheet, then the transaction. Pick a category and choose **Always for** the merchant (every transaction from that merchant, in every month and account) or **Just this one**. Rules and choices are settings, stored in the same place as the account settings described below.
 
+One payment that covers several things (rent and bills paid together, say) can be shared out: open it and choose **Split between categories**, then give each part a category and an amount until the whole amount is accounted for. Each part counts towards its own row, the transaction shows as "Split" wherever one of its parts lands, and filing it under a single category again removes the split. Splits apply to that one transaction.
+
 `categories.config.js` holds the category tree and the keywords. Edit it to rename, add or remove categories, or to teach it your own merchants. A `MONETA_CATEGORIES` environment variable with the same structure as JSON replaces the file.
 
 ```js

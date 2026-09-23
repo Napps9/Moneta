@@ -105,11 +105,19 @@
         <h2 id="catpicker-title">Transaction</h2>
         <p id="catpicker-sub" class="editor-sub"></p>
         <div id="catpicker-groups" class="optgroups"></div>
-        <fieldset class="scope">
+        <div id="split-editor" class="split" hidden>
+          <div id="split-rows" class="split-rows"></div>
+          <div class="split-foot">
+            <button type="button" class="link-btn" id="split-add">Add another part</button>
+            <span id="split-left" class="split-left"></span>
+          </div>
+        </div>
+        <fieldset class="scope" id="catpicker-scope">
           <legend class="sr-only">Apply to</legend>
           <label class="radio"><input type="radio" name="scope" value="merchant" id="scope-merchant" /><span id="scope-merchant-label">Always for this merchant</span></label>
           <label class="radio"><input type="radio" name="scope" value="one" id="scope-one" /><span>Just this one</span></label>
         </fieldset>
+        <p class="editor-toggle"><button type="button" class="link-btn" id="split-toggle">Split between categories</button></p>
         <p id="catpicker-error" class="editor-error" role="alert" hidden></p>
         <p id="catpicker-hint" class="editor-hint"></p>
         <div class="editor-actions">

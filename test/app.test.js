@@ -180,7 +180,7 @@ test('settings can be read and written when a store is configured', async () => 
   const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
   try {
     const before = await (await fetch(`${stored}/api/settings`)).json();
-    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, groups: before.groups });
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, groups: before.groups });
     assert.equal(before.groups.length, 3);
 
     const put = await fetch(`${stored}/api/settings`, {

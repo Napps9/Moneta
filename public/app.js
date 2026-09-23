@@ -44,6 +44,12 @@ const catpickerError = $('catpicker-error');
 const catpickerHint = $('catpicker-hint');
 const catpickerCancel = $('catpicker-cancel');
 const catpickerSave = $('catpicker-save');
+const catpickerScope = $('catpicker-scope');
+const splitEditor = $('split-editor');
+const splitRows = $('split-rows');
+const splitAdd = $('split-add');
+const splitLeft = $('split-left');
+const splitToggle = $('split-toggle');
 
 const AUTO_RELOAD_MS = 60_000;
 const PASSWORD_KEY = 'moneta.password';
@@ -174,7 +180,7 @@ function writeCollapsed(collapsed) {
 }
 
 // Settings kept in this browser, used when the server has nowhere to store them.
-const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {} });
+const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {} });
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 function readLocalSettings() {
@@ -185,16 +191,18 @@ function readLocalSettings() {
       accounts: isObject(parsed.accounts) ? parsed.accounts : {},
       rules: isObject(parsed.rules) ? parsed.rules : {},
       transactions: isObject(parsed.transactions) ? parsed.transactions : {},
+      splits: isObject(parsed.splits) ? parsed.splits : {},
     };
   } catch {
     return emptySettings();
   }
 }
-const settingsEmpty = (s) => !s || Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length === 0;
+const settingsEmpty = (s) =>
+  !s || Object.keys(s.accounts || {}).length + Object.keys(s.rules || {}).length + Object.keys(s.transactions || {}).length + Object.keys(s.splits || {}).length === 0;
 function writeLocalSettings(settings) {
   try {
     if (settings && !settingsEmpty(settings)) {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions }));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ accounts: settings.accounts, rules: settings.rules, transactions: settings.transactions, splits: settings.splits || {} }));
     } else localStorage.removeItem(SETTINGS_KEY);
   } catch {
     /* storage unavailable: settings last for this page load only */
@@ -289,7 +297,7 @@ function plural(count, singular, pluralForm = `${singular}s`) {
 }
 
 function settingsPayload() {
-  return { accounts: state.settings.accounts, rules: state.settings.rules, transactions: state.settings.transactions };
+  return { accounts: state.settings.accounts, rules: state.settings.rules, transactions: state.settings.transactions, splits: state.settings.splits || {} };
 }
 
 function cloneSettings() {
@@ -297,6 +305,7 @@ function cloneSettings() {
     accounts: Object.fromEntries(Object.entries(state.settings.accounts).map(([k, v]) => [k, { ...v }])),
     rules: { ...state.settings.rules },
     transactions: { ...state.settings.transactions },
+    splits: Object.fromEntries(Object.entries(state.settings.splits || {}).map(([k, parts]) => [k, parts.map((part) => ({ ...part }))])),
   };
 }
 
@@ -749,7 +758,16 @@ function cellTransactions() {
   if (!cell || !data) return [];
   const month = data.months[cell.monthIndex];
   if (!month) return [];
-  return data.transactions.filter((t) => t.month === month.key && cell.cats.includes(t.category) && (cell.sign === 'in' ? t.amount >= 0 : t.amount < 0));
+  return data.transactions.filter((t) => t.month === month.key && (cell.sign === 'in' ? t.amount >= 0 : t.amount < 0) && partsIn(t, cell.cats).length > 0);
+}
+
+/** The parts of a transaction that land in one of the given categories (one part unless it is split). */
+function partsIn(txn, cats) {
+  return (txn.parts || [{ category: txn.category, amount: Math.abs(txn.amount) }]).filter((part) => cats.includes(part.category));
+}
+
+function amountIn(txn, cats) {
+  return partsIn(txn, cats).reduce((sum, part) => sum + part.amount, 0);
 }
 
 function renderDrill() {
@@ -762,18 +780,21 @@ function renderDrill() {
   }
   const month = data.months[cell.monthIndex];
   const list = cellTransactions();
-  const total = list.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  const total = list.reduce((sum, t) => sum + amountIn(t, cell.cats), 0);
   const rows = list.map((t) => {
+    const currency = t.currency || data.currency;
     const meta = [];
     if (t.pending) meta.push(el('span', { class: 'badge badge--warning', text: 'Pending' }));
     if (t.merchant && t.description && t.merchant !== t.description) meta.push(el('span', { text: t.description }));
+    if (t.split) meta.push(el('span', { text: `${formatMoney(Math.abs(t.amount), currency)} split: ${t.parts.map((part) => `${part.categoryLabel} ${formatMoney(part.amount, currency)}`).join(' · ')}` }));
+    const here = amountIn(t, cell.cats);
     return el(
       'button',
       { class: 'txn', type: 'button', 'aria-label': `Change category for ${t.merchant || t.description}`, onclick: () => openCatPicker(t) },
       el('span', { class: 'txn-date', text: formatDay(t.date, { weekday: false }) }),
       el('span', { class: 'txn-main' }, el('span', { class: 'txn-desc', text: t.merchant || t.description || 'Transaction' }), el('span', { class: 'row-meta' }, meta)),
-      el('span', { class: `tag${t.category ? '' : ' tag--none'}`, text: t.categoryLabel }),
-      el('span', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount, t.currency || data.currency) }),
+      el('span', { class: `tag${t.split || t.category ? '' : ' tag--none'}`, text: t.split ? 'Split' : t.categoryLabel }),
+      el('span', { class: `txn-amount${t.amount >= 0 ? ' txn-amount--in' : ''}`, text: formatSigned(t.amount >= 0 ? here : -here, currency) }),
     );
   });
   drillEl.replaceChildren(
@@ -885,13 +906,139 @@ function renderCatPickerGroups() {
   );
 }
 
+// ----- splitting one transaction between categories -----
+
+const money2 = (value) => Math.round(value * 100) / 100;
+
+function splitTotal() {
+  return money2(Math.abs(state.catPicker.txn.amount));
+}
+
+function splitLeftAmount() {
+  const allocated = state.catPicker.parts.reduce((sum, part) => sum + (Number.isFinite(part.amount) ? part.amount : 0), 0);
+  return money2(splitTotal() - allocated);
+}
+
+function catPickerOptions(txn, selected) {
+  return catPickerGroups(txn).map((group) =>
+    el(
+      'optgroup',
+      { label: group.label },
+      group.items.map((item) => el('option', { value: item.id, text: item.label, selected: (item.id || '') === (selected || '') })),
+    ),
+  );
+}
+
+function renderSplitFoot() {
+  const { txn, parts } = state.catPicker;
+  const currency = txn.currency || state.sheet.data.currency;
+  const total = splitTotal();
+  const left = splitLeftAmount();
+  const incomplete = parts.some((part) => !Number.isFinite(part.amount) || part.amount <= 0);
+  let text;
+  if (incomplete) text = `${formatMoney(total, currency)} to share out · every part needs an amount`;
+  else if (Math.abs(left) < 0.005) text = `All ${formatMoney(total, currency)} shared out`;
+  else if (left > 0) text = `${formatMoney(left, currency)} of ${formatMoney(total, currency)} still to share out`;
+  else text = `${formatMoney(-left, currency)} over the ${formatMoney(total, currency)} total`;
+  splitLeft.textContent = text;
+  splitLeft.classList.toggle('split-left--over', left < -0.005);
+  catpickerSave.disabled = incomplete || Math.abs(left) >= 0.005;
+}
+
+function renderSplitEditor() {
+  const { txn, parts } = state.catPicker;
+  splitRows.replaceChildren(
+    ...parts.map((part, i) =>
+      el(
+        'div',
+        { class: 'split-row' },
+        el(
+          'select',
+          {
+            'aria-label': `Category for part ${i + 1}`,
+            onchange: (event) => {
+              part.category = event.target.value;
+            },
+          },
+          catPickerOptions(txn, part.category),
+        ),
+        el('input', {
+          type: 'number',
+          inputmode: 'decimal',
+          step: '0.01',
+          min: '0',
+          value: Number.isFinite(part.amount) ? String(part.amount) : '',
+          'aria-label': `Amount for part ${i + 1}`,
+          oninput: (event) => {
+            const value = Number(event.target.value);
+            part.amount = event.target.value === '' || !Number.isFinite(value) ? NaN : money2(value);
+            renderSplitFoot();
+          },
+        }),
+        el('button', {
+          class: 'split-remove',
+          type: 'button',
+          text: '×',
+          'aria-label': `Remove part ${i + 1}`,
+          disabled: parts.length <= 1,
+          onclick: () => {
+            parts.splice(i, 1);
+            renderSplitEditor();
+          },
+        }),
+      ),
+    ),
+  );
+  splitAdd.disabled = parts.length >= 20;
+  renderSplitFoot();
+}
+
+function renderCatPickerMode() {
+  const split = state.catPicker.mode === 'split';
+  catpickerGroups.hidden = split;
+  catpickerScope.hidden = split;
+  splitEditor.hidden = !split;
+  splitToggle.textContent = split ? 'File it all under one category instead' : 'Split between categories';
+  if (split) renderSplitEditor();
+  else {
+    renderCatPickerGroups();
+    catpickerSave.disabled = false;
+  }
+}
+
+splitToggle.addEventListener('click', () => {
+  const picker = state.catPicker;
+  if (!picker) return;
+  if (picker.mode === 'split') picker.mode = 'one';
+  else {
+    picker.mode = 'split';
+    if (picker.parts.length === 0) picker.parts = [{ category: picker.choice || '', amount: splitTotal() }, { category: '', amount: NaN }];
+  }
+  renderCatPickerMode();
+});
+
+splitAdd.addEventListener('click', () => {
+  const picker = state.catPicker;
+  if (!picker || picker.mode !== 'split' || picker.parts.length >= 20) return;
+  const left = splitLeftAmount();
+  picker.parts.push({ category: '', amount: left > 0 ? left : NaN });
+  renderSplitEditor();
+  const selects = splitRows.querySelectorAll('select');
+  if (selects.length) selects[selects.length - 1].focus();
+});
+
 function openCatPicker(txn) {
   if (typeof catpickerEl.showModal !== 'function') return;
-  state.catPicker = { txn, choice: txn.category || '' };
+  const split = Boolean(txn.split) && Array.isArray(txn.parts) && txn.parts.length > 0;
+  state.catPicker = {
+    txn,
+    choice: txn.category || '',
+    mode: split ? 'split' : 'one',
+    parts: split ? txn.parts.map((part) => ({ category: part.category || '', amount: money2(part.amount) })) : [],
+  };
   catpickerTitle.textContent = txn.merchant || txn.description || 'Transaction';
   const currency = txn.currency || state.sheet.data.currency;
   catpickerSub.textContent = `${formatDay(txn.date)} · ${formatSigned(txn.amount, currency)}${txn.description && txn.description !== txn.merchant ? ` · ${txn.description}` : ''}`;
-  renderCatPickerGroups();
   const merchant = txn.merchantKey;
   scopeMerchantLabel.textContent = merchant ? `Always for ${txn.merchant || txn.description}` : 'Always for this merchant';
   scopeMerchant.disabled = !merchant;
@@ -904,6 +1051,7 @@ function openCatPicker(txn) {
       ? 'Saved for every device you open this page on.'
       : 'Saved in this browser only. To share across devices, add Upstash Redis under Storage in your Vercel project.';
   catpickerSave.disabled = false;
+  renderCatPickerMode();
   catpickerEl.showModal();
 }
 
@@ -916,15 +1064,27 @@ async function submitCatPicker(event) {
   event.preventDefault();
   const picker = state.catPicker;
   if (!picker) return;
-  const { txn, choice } = picker;
+  const { txn, choice, mode, parts } = picker;
   const next = cloneSettings();
-  if (scopeMerchant.checked && txn.merchantKey) {
-    if (choice) next.rules[txn.merchantKey] = choice;
-    else delete next.rules[txn.merchantKey];
-    // A per-transaction choice would still win; clear it so the merchant rule applies here too.
-    delete next.transactions[txn.key];
-  } else if (choice) next.transactions[txn.key] = choice;
-  else delete next.transactions[txn.key];
+  if (mode === 'split') {
+    const clean = parts.filter((part) => Number.isFinite(part.amount) && part.amount > 0).map((part) => ({ category: part.category || null, amount: part.amount }));
+    if (clean.length === 0 || Math.abs(splitLeftAmount()) >= 0.005) {
+      catpickerError.textContent = 'Share out the whole amount first.';
+      catpickerError.hidden = false;
+      return;
+    }
+    next.splits[txn.key] = clean;
+  } else {
+    // Filing under one category, whatever the scope, undoes any split of this transaction.
+    delete next.splits[txn.key];
+    if (scopeMerchant.checked && txn.merchantKey) {
+      if (choice) next.rules[txn.merchantKey] = choice;
+      else delete next.rules[txn.merchantKey];
+      // A per-transaction choice would still win; clear it so the merchant rule applies here too.
+      delete next.transactions[txn.key];
+    } else if (choice) next.transactions[txn.key] = choice;
+    else delete next.transactions[txn.key];
+  }
 
   catpickerSave.disabled = true;
   try {
@@ -1119,11 +1279,20 @@ async function saveSettings(next) {
     const res = await apiFetch('/api/settings', { method: 'PUT', body: next });
     const body = await res.json().catch(() => null);
     if (!res.ok) throw new Error((body && (body.message || body.error)) || `Saving failed with status ${res.status}`);
-    state.settings = { ...state.settings, persistent: body.persistent, kind: body.kind, error: body.error ?? null, accounts: body.accounts || {}, rules: body.rules || {}, transactions: body.transactions || {} };
+    state.settings = {
+      ...state.settings,
+      persistent: body.persistent,
+      kind: body.kind,
+      error: body.error ?? null,
+      accounts: body.accounts || {},
+      rules: body.rules || {},
+      transactions: body.transactions || {},
+      splits: body.splits || {},
+    };
     return;
   }
   writeLocalSettings(next);
-  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions };
+  state.settings = { ...state.settings, accounts: next.accounts, rules: next.rules, transactions: next.transactions, splits: next.splits || {} };
 }
 
 async function submitEditor(event) {
@@ -1207,6 +1376,7 @@ function adoptServerSettings(settings) {
     accounts: settings.accounts || {},
     rules: settings.rules || {},
     transactions: settings.transactions || {},
+    splits: settings.splits || {},
   };
 }
 
@@ -1230,7 +1400,7 @@ async function load({ refresh = false } = {}) {
         // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
         if (!state.migrated && !settingsEmpty(local) && serverEmpty) {
           state.migrated = true;
-          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {} });
+          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {} });
           try {
             await saveSettings(local);
             writeLocalSettings(null);

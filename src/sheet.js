@@ -29,6 +29,25 @@ export function monthWindow(endKey, count) {
   return months;
 }
 
+/**
+ * The parts a transaction's amount is shared out into. Without a split that is one part in the
+ * transaction's own category. With one, each part is capped at what is still unallocated, and
+ * whatever the parts leave over stays in the transaction's own category, so nothing is lost.
+ */
+function partsOf(total, base, split) {
+  if (!Array.isArray(split) || split.length === 0) return [{ category: base, amount: round(total) }];
+  const parts = [];
+  let remaining = total;
+  for (const part of split) {
+    const amount = Math.min(Number(part && part.amount) || 0, remaining);
+    if (amount <= 0) continue;
+    parts.push({ category: part.category ?? null, amount: round(amount) });
+    remaining = round(remaining - amount);
+  }
+  if (remaining > 0) parts.push({ category: base, amount: round(remaining) });
+  return parts;
+}
+
 export function buildSheet({
   accountId,
   transactions,
@@ -39,18 +58,25 @@ export function buildSheet({
   today,
   otherAccountNames = [],
 }) {
+  const splits = settings && settings.splits && typeof settings.splits === 'object' ? settings.splits : {};
+  const describe = (category) => {
+    const leaf = category ? categories.leaves.get(category) : null;
+    return { categoryLabel: labelOf(categories, category), parent: leaf ? leaf.parent : null };
+  };
   const classified = transactions.map((txn) => {
     const { category, source } = classifyTransaction(txn, { config: categories, settings, accountId, otherAccountNames });
-    const leaf = category ? categories.leaves.get(category) : null;
+    const key = transactionKey(accountId, txn);
+    const split = Array.isArray(splits[key]) && splits[key].length > 0 ? splits[key] : null;
     return {
       ...txn,
-      key: transactionKey(accountId, txn),
+      key,
       merchantKey: merchantKey(txn),
       month: monthKey(txn.date),
       category,
-      categoryLabel: labelOf(categories, category),
-      parent: leaf ? leaf.parent : null,
+      ...describe(category),
       source,
+      split: Boolean(split),
+      parts: partsOf(Math.abs(txn.amount), category, split).map((part) => ({ ...part, ...describe(part.category) })),
     };
   });
 
@@ -69,9 +95,12 @@ export function buildSheet({
     const i = index.get(txn.month);
     if (i === undefined) continue;
     flows[i] += txn.amount;
-    const bucket = `${txn.category ?? ''}|${txn.amount >= 0 ? 'in' : 'out'}`;
-    if (!sums.has(bucket)) sums.set(bucket, zeros());
-    sums.get(bucket)[i] += Math.abs(txn.amount);
+    const sign = txn.amount >= 0 ? 'in' : 'out';
+    for (const part of txn.parts) {
+      const bucket = `${part.category ?? ''}|${sign}`;
+      if (!sums.has(bucket)) sums.set(bucket, zeros());
+      sums.get(bucket)[i] += part.amount;
+    }
   }
 
   const values = (category, sign) => (sums.get(`${category ?? ''}|${sign}`) || zeros()).map(round);
@@ -117,6 +146,6 @@ export function buildSheet({
     transfers: { in: transfersIn, out: transfersOut },
     balance: { opening, closing },
     transactions: inWindow,
-    uncategorisedCount: inWindow.filter((txn) => txn.category === null).length,
+    uncategorisedCount: inWindow.filter((txn) => txn.parts.some((part) => part.category === null)).length,
   };
 }

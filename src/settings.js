@@ -3,6 +3,7 @@
  *   accounts:     per account, which group it belongs to, how to read its balance, whether it is pinned
  *   rules:        merchant -> category ("always file Tesco under Groceries")
  *   transactions: one transaction -> category ("just this one")
+ *   splits:       one transaction -> parts [{ category, amount }] when it is shared between categories
  *
  * Storage, in order of preference:
  *   - Redis over REST (Upstash): KV_REST_API_URL + KV_REST_API_TOKEN, or
@@ -19,9 +20,11 @@ export const TREATMENTS = ['reported', 'negate', 'credit-limit'];
 const MAX_ACCOUNTS = 500;
 const MAX_RULES = 2000;
 const MAX_TRANSACTIONS = 5000;
+const MAX_SPLITS = 2000;
+const MAX_PARTS = 20;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
-export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {} });
+export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -82,6 +85,28 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
   };
   out.rules = takeMap(source.rules, MAX_RULES, 200);
   out.transactions = takeMap(source.transactions, MAX_TRANSACTIONS, 300);
+
+  // A split is a list of parts; a part with no category is "uncategorised". Parts with an unknown
+  // category or no positive amount are dropped, and a split left with no parts is dropped too.
+  let splitCount = 0;
+  for (const [key, value] of Object.entries(isPlainObject(source.splits) ? source.splits : {})) {
+    if (splitCount >= MAX_SPLITS) break;
+    const cleanKey = String(key).trim();
+    if (!cleanKey || cleanKey.length > 300 || !Array.isArray(value)) continue;
+    const parts = [];
+    for (const part of value.slice(0, MAX_PARTS)) {
+      if (!isPlainObject(part)) continue;
+      const amount = Number(part.amount);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const wantsCategory = part.category != null && part.category !== '';
+      const category = wantsCategory ? validCategory(part.category) : null;
+      if (wantsCategory && !category) continue;
+      parts.push({ category, amount: Math.round(amount * 10000) / 10000 });
+    }
+    if (parts.length === 0) continue;
+    out.splits[cleanKey] = parts;
+    splitCount += 1;
+  }
 
   return out;
 }

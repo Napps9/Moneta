@@ -84,6 +84,53 @@ test('buildSheet honours settings and leaves balances empty without a current ba
   assert.deepEqual(sheet.balance, { opening: [null], closing: [null] });
 });
 
+test('a split transaction is summed into each of its parts', () => {
+  const rent = tx('2026-09-01', -1250, 'LANDLORD RENT AND BILLS');
+  const build = (splits) =>
+    buildSheet({
+      accountId: 1,
+      transactions: [rent],
+      months: monthWindow('2026-09', 1),
+      categories: config,
+      settings: { rules: {}, transactions: {}, splits },
+      currentBalance: 0,
+      today: '2026-09-22',
+    });
+  const key = `id:${rent.id}`;
+  const living = (sheet) => sheet.outgoings.rows.find((r) => r.id === 'living');
+  const sub = (sheet, id) => living(sheet).subs.find((s) => s.id === id).values;
+
+  const sheet = build({ [key]: [{ category: 'rent', amount: 1100 }, { category: 'energy', amount: 100 }, { category: null, amount: 50 }] });
+  assert.deepEqual(sub(sheet, 'rent'), [1100]);
+  assert.deepEqual(sub(sheet, 'energy'), [100]);
+  assert.deepEqual(living(sheet).values, [1200]);
+  assert.deepEqual(sheet.outgoings.uncategorised, [50]);
+  assert.deepEqual(sheet.outgoings.total, [1250], 'the total is unchanged by splitting');
+  assert.deepEqual(sheet.balance.closing, [0]);
+  const t = sheet.transactions[0];
+  assert.equal(t.split, true);
+  assert.equal(t.category, 'rent', 'the transaction itself still has the category it would have had');
+  assert.deepEqual(
+    t.parts.map((p) => [p.category, p.amount, p.categoryLabel, p.parent]),
+    [['rent', 1100, 'Rent', 'living'], ['energy', 100, 'Energy', 'living'], [null, 50, 'Uncategorised', null]],
+  );
+  assert.equal(sheet.uncategorisedCount, 1);
+
+  const partial = build({ [key]: [{ category: 'energy', amount: 100 }] });
+  assert.deepEqual(sub(partial, 'energy'), [100]);
+  assert.deepEqual(sub(partial, 'rent'), [1150], 'whatever is not allocated stays where the transaction would have gone');
+  assert.equal(partial.transactions[0].parts.length, 2);
+
+  const over = build({ [key]: [{ category: 'energy', amount: 2000 }, { category: 'water', amount: 10 }] });
+  assert.deepEqual(sub(over, 'energy'), [1250], 'a part is capped at the amount');
+  assert.deepEqual(sub(over, 'water'), [0]);
+  assert.deepEqual(over.transactions[0].parts.map((p) => p.category), ['energy']);
+
+  const plain = build({});
+  assert.equal(plain.transactions[0].split, false);
+  assert.deepEqual(plain.transactions[0].parts, [{ category: 'rent', amount: 1250, categoryLabel: 'Rent', parent: 'living' }]);
+});
+
 test('the activity service serves a sheet for an account, clamped to the current month', async () => {
   const now = () => Date.parse('2026-09-22T12:00:00Z');
   const client = {

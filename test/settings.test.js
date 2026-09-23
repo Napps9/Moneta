@@ -39,6 +39,7 @@ test('normalizeSettings keeps valid entries and drops the rest', () => {
     },
     rules: {},
     transactions: {},
+    splits: {},
   });
   assert.deepEqual(normalizeSettings(null, config).accounts, {});
   assert.deepEqual(normalizeSettings({ accounts: [] }, config).accounts, {});
@@ -53,6 +54,12 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
       accounts: { 1: { pinned: 1700000000000.7 }, 2: { pinned: true }, 3: { pinned: -5 }, 4: { pinned: 'yes' } },
       rules: { tesco: 'Groceries', puregym: 'gym', shop: 'not-a-category', health: 'health', '': 'gym', pot: 'transfer' },
       transactions: { 'id:1': 'weekend', 'id:2': 42 },
+      splits: {
+        'id:9': [{ category: 'Rent', amount: '1100' }, { category: 'energy', amount: 100.123456 }, { category: 'nope', amount: 5 }, { amount: 50 }, { category: 'gym', amount: 0 }, 'junk'],
+        'id:10': [],
+        'id:11': 'not a list',
+        'id:12': [{ category: 'health', amount: 10 }],
+      },
     },
     config,
     categories,
@@ -60,6 +67,11 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
   assert.deepEqual(settings.accounts, { 1: { pinned: 1700000000000 }, 2: { pinned: 1 } });
   assert.deepEqual(settings.rules, { tesco: 'groceries', puregym: 'gym', pot: 'transfer' }, 'unknown categories and parents are dropped');
   assert.deepEqual(settings.transactions, { 'id:1': 'weekend' });
+  assert.deepEqual(
+    settings.splits,
+    { 'id:9': [{ category: 'rent', amount: 1100 }, { category: 'energy', amount: 100.1235 }, { category: null, amount: 50 }] },
+    'parts need a positive amount and a known category or none; empty splits go',
+  );
 
   const loose = normalizeSettings({ rules: { x: 'anything' } }, config);
   assert.deepEqual(loose.rules, { x: 'anything' }, 'without a categories config any short id is kept');
@@ -76,7 +88,7 @@ test('the file store round-trips and starts empty', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moneta-settings-'));
   const store = createFileStore(path.join(dir, 'nested', 'settings.json'));
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
   await store.write({ version: 1, accounts: { 7: { group: 'savings' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 7: { group: 'savings' } } });
 });
@@ -97,7 +109,7 @@ test('the redis store talks Upstash REST', async () => {
   const store = createRedisStore({ url: 'https://example.upstash.io/', token: 'tok', fetchImpl });
 
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {} });
   await store.write({ version: 1, accounts: { 1: { balance: 'negate' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 1: { balance: 'negate' } } });
 
