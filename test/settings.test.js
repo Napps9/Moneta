@@ -42,6 +42,7 @@ test('normalizeSettings keeps valid entries and drops the rest', () => {
     splits: {},
     categories: [],
     budgets: {},
+    forecast: {},
   });
   assert.deepEqual(normalizeSettings(null, config).accounts, {});
   assert.deepEqual(normalizeSettings({ accounts: [] }, config).accounts, {});
@@ -68,11 +69,13 @@ test('normalizeSettings keeps pins, merchant rules and per-transaction choices',
         'id:12': [{ category: 'health', amount: 10 }],
       },
       budgets: { 101: { 'out:groceries': '250.555', 'in:salary': 3000, 'bad key': 5, 'out:x': -1, 'tr:out': 'nope' }, ' ': { 'out:a': 1 }, 102: 'nope', 103: { 'out:a': 'x' } },
+      forecast: { 101: 'budget', 102: 'auto', '': 'budget', 104: true },
     },
     config,
     categories,
   );
   assert.deepEqual(settings.budgets, { 101: { 'out:groceries': 250.56, 'in:salary': 3000 } }, 'budgets need a row key and an amount of zero or more');
+  assert.deepEqual(settings.forecast, { 101: 'budget' }, 'only budget mode is stored; auto is the default');
   assert.deepEqual(settings.accounts, { 1: { pinned: 1700000000000 }, 2: { pinned: 1 } });
   assert.deepEqual(settings.rules, { tesco: 'groceries', puregym: 'gym', pot: 'transfer', nursery: 'u-nursery' }, 'unknown categories and parents are dropped; app-made categories count');
   assert.deepEqual(
@@ -104,7 +107,7 @@ test('the file store round-trips and starts empty', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moneta-settings-'));
   const store = createFileStore(path.join(dir, 'nested', 'settings.json'));
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
   await store.write({ version: 1, accounts: { 7: { group: 'savings' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 7: { group: 'savings' } } });
 });
@@ -125,7 +128,7 @@ test('the redis store talks Upstash REST', async () => {
   const store = createRedisStore({ url: 'https://example.upstash.io/', token: 'tok', fetchImpl });
 
   assert.equal(store.persistent, true);
-  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
+  assert.deepEqual(await store.read(), { version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
   await store.write({ version: 1, accounts: { 1: { balance: 'negate' } } });
   assert.deepEqual(await store.read(), { version: 1, accounts: { 1: { balance: 'negate' } } });
 

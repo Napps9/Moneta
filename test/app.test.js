@@ -172,6 +172,18 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   const withBudget = (await budgeted.json()).projection.outgoings.rows.find((r) => r.id === 'groceries');
   assert.deepEqual([withBudget.value, withBudget.set], [123.45, true]);
 
+  const further = await fetch(`${base}/api/sheet?account=101&months=3&ahead=5`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ settings: { budgets: { 101: { 'out:groceries': 100 } }, forecast: { 101: 'budget' } } }),
+  });
+  const budgetOnly = (await further.json()).projection;
+  assert.equal(budgetOnly.months.length, 5, 'ahead sets how many months are projected');
+  assert.equal(budgetOnly.mode, 'budget');
+  assert.equal(budgetOnly.outgoings.rows.find((r) => r.id === 'groceries').value, 100);
+  assert.equal(budgetOnly.income.rows.find((r) => r.id === 'salary').value, 0, 'in budget mode nothing is guessed');
+  assert.ok(budgetOnly.income.rows.find((r) => r.id === 'salary').auto > 0, 'the automatic figure is still there for reference');
+
   const merchant = sheet.transactions.find((t) => t.category === 'groceries');
   const posted = await fetch(`${base}/api/sheet?account=101&months=3`, {
     method: 'POST',
@@ -214,7 +226,7 @@ test('settings can be read and written when a store is configured', async () => 
   const { server, base: stored } = await listen(createRequestHandler({ service, publicDir, logger: silent }));
   try {
     const before = await (await fetch(`${stored}/api/settings`)).json();
-    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, groups: before.groups });
+    assert.deepEqual(before, { persistent: true, kind: 'file', error: null, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {}, groups: before.groups });
     assert.equal(before.groups.length, 3);
 
     const put = await fetch(`${stored}/api/settings`, {

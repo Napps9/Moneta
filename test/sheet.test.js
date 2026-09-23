@@ -107,10 +107,11 @@ test('the projection runs outgoings at their average, income at its latest month
     tx('2026-08-15', -300, 'POT TRANSFER TO SAVINGS POT'),
     tx('2026-07-10', -60, 'PUREGYM', { merchant: 'PureGym' }),
   ];
-  const build = (budgets) =>
-    buildSheet({ accountId: 1, transactions, months, categories: config, settings: { rules: {}, transactions: {}, splits: {} }, budgets, currentBalance: 1000, today: '2026-09-22' });
+  const build = (budgets, extra = {}) =>
+    buildSheet({ accountId: 1, transactions, months, categories: config, settings: { rules: {}, transactions: {}, splits: {} }, budgets, currentBalance: 1000, today: '2026-09-22', ...extra });
   const p = build({}).projection;
   assert.deepEqual(p.months.map((m) => m.key), ['2026-10', '2026-11', '2026-12']);
+  assert.equal(p.mode, 'auto');
   assert.equal(p.basis.complete, 3);
   const row = (rows, id) => rows.find((r) => r.id === id);
   assert.deepEqual([row(p.outgoings.rows, 'groceries').value, row(p.outgoings.rows, 'groceries').set, row(p.outgoings.rows, 'groceries').soFar], [200, false, 50], 'average of the complete months');
@@ -129,6 +130,15 @@ test('the projection runs outgoings at their average, income at its latest month
   assert.equal(row(q.outgoings.rows, 'health').value, 0, 'a group can be set as a whole');
   assert.equal(q.outgoings.total, 180);
   assert.equal(q.balance.currentMonthEnd, 1000 + 3000 - 130 - 100);
+
+  const b = build({ 'out:groceries': 180 }, { forecastMode: 'budget', ahead: 5 }).projection;
+  assert.equal(b.mode, 'budget');
+  assert.equal(b.months.length, 5, 'ahead sets how far the projection runs');
+  assert.deepEqual([row(b.outgoings.rows, 'groceries').value, row(b.outgoings.rows, 'groceries').set], [180, true]);
+  assert.deepEqual([row(b.income.rows, 'salary').value, row(b.income.rows, 'salary').auto], [0, 2600], 'nothing is guessed in budget mode, but the automatic figure is kept for reference');
+  assert.deepEqual([b.income.total, b.outgoings.total, b.transfers.out.value], [0, 180, 0]);
+  assert.equal(b.balance.currentMonthEnd, 1000 - 130, 'only the rest of the groceries budget is still to come');
+  assert.equal(build({}, { ahead: 99 }).projection.months.length, 12, 'capped at a year');
 
   const past = buildSheet({ accountId: 1, transactions, months: monthWindow('2026-08', 3), categories: config, currentBalance: 1000, today: '2026-09-22' });
   assert.equal(past.projection, null, 'nothing to project from a window that ended in the past');

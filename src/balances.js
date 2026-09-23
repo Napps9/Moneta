@@ -204,6 +204,7 @@ export function createBalanceService({
     splits: resolved.settings.splits,
     categories: resolved.settings.categories,
     budgets: resolved.settings.budgets,
+    forecast: resolved.settings.forecast,
   });
 
   async function getSnapshot({ refresh = false, settings: sent = null } = {}) {
@@ -237,6 +238,7 @@ export function createBalanceService({
       splits: settings.splits,
       categories: settings.categories,
       budgets: settings.budgets,
+      forecast: settings.forecast,
       groups: groupsConfig.groups,
     };
   }

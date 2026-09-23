@@ -166,7 +166,7 @@ export function createActivityService({
   });
 
   /** The Accounts sheet: categories by month for one account, ending at month `to` (YYYY-MM). */
-  async function getSheet({ accountId, to = null, months = 6, refresh = false, settings: sent = null } = {}) {
+  async function getSheet({ accountId, to = null, months = 6, ahead = 3, refresh = false, settings: sent = null } = {}) {
     const today = isoDate(now());
     const currentMonth = monthKey(today);
     if (to != null && to !== '' && !MONTH_RE.test(String(to))) throw new ActivityError('to must be a month in YYYY-MM form');
@@ -193,6 +193,8 @@ export function createActivityService({
       categories: tree,
       settings: resolved,
       budgets: resolved && resolved.budgets ? resolved.budgets[String(account.id)] || {} : {},
+      forecastMode: resolved && resolved.forecast && resolved.forecast[String(account.id)] === 'budget' ? 'budget' : 'auto',
+      ahead: Number.parseInt(ahead, 10) || 3,
       currentBalance: account.balance ? account.balance.current : null,
       today,
       otherAccountNames: snapshot.accounts.filter((a) => String(a.id) !== String(account.id)).map((a) => a.name),

@@ -15,6 +15,7 @@ const navLinks = [...document.querySelectorAll('.nav-link')];
 const pickerEl = $('account-picker');
 const periodPickerEl = $('period-picker');
 const sheetModeEl = $('sheet-mode');
+const forecastModeEl = $('forecast-mode');
 const activityHeadEl = $('activity-head');
 const sheetWrapEl = $('sheet-wrap');
 const sheetEl = $('sheet');
@@ -96,7 +97,9 @@ const COLLAPSED_KEY = 'moneta.collapsed';
 const SHEET_MODE_KEY = 'moneta.sheetMode';
 const HIDE_EMPTY_KEY = 'moneta.hideEmpty';
 const SHEET_MONTHS = 7; // fetched: six complete months for the trends and the forecasts, plus the current one
-const SHOW_MONTHS = 3; // shown as actuals; the rest feed the trends and the projection
+const VIEW_COLS = 6; // months in view at once; the window slides back into history and forward into forecasts
+const DEFAULT_AHEAD = 3; // the view opens ending three months from now: three actuals, then the forecasts
+const MAX_AHEAD = 12;
 const MONTHS_BACK = 24;
 const TRANSFER = 'transfer';
 
@@ -131,6 +134,13 @@ function formatMonth(key, { short = false } = {}) {
   return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
+/** Whole months from one YYYY-MM to another; negative when `to` is earlier. */
+function monthDiff(from, to) {
+  const [fy, fm] = splitMonth(from);
+  const [ty, tm] = splitMonth(to);
+  return (ty - fy) * 12 + (tm - fm);
+}
+
 function formatWindow(endKey, count) {
   const startKey = shiftMonth(endKey, -(count - 1));
   const [sy, sm] = splitMonth(startKey);
@@ -162,7 +172,8 @@ function parseHash() {
     } catch {
       accountId = null;
     }
-    const period = MONTH_RE.test(parts[2] || '') && parts[2] <= now ? parts[2] : now;
+    // The month the view ends on. It may run past now, into the forecasts, up to a year ahead.
+    const period = MONTH_RE.test(parts[2] || '') && parts[2] <= shiftMonth(now, MAX_AHEAD) ? parts[2] : shiftMonth(now, DEFAULT_AHEAD);
     return { screen: 'accounts', accountId, period };
   }
   return { screen: 'balances', accountId: null, period: now };
@@ -252,7 +263,7 @@ function writeCollapsed(collapsed) {
 }
 
 // Settings kept in this browser, used when the server has nowhere to store them.
-const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
+const emptySettings = () => ({ accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 function readLocalSettings() {
@@ -266,6 +277,7 @@ function readLocalSettings() {
       splits: isObject(parsed.splits) ? parsed.splits : {},
       categories: Array.isArray(parsed.categories) ? parsed.categories : [],
       budgets: isObject(parsed.budgets) ? parsed.budgets : {},
+      forecast: isObject(parsed.forecast) ? parsed.forecast : {},
     };
   } catch {
     return emptySettings();
@@ -278,7 +290,8 @@ const settingsEmpty = (s) =>
     Object.keys(s.transactions || {}).length +
     Object.keys(s.splits || {}).length +
     (s.categories || []).length +
-    Object.keys(s.budgets || {}).length ===
+    Object.keys(s.budgets || {}).length +
+    Object.keys(s.forecast || {}).length ===
     0;
 function writeLocalSettings(settings) {
   try {
@@ -292,6 +305,7 @@ function writeLocalSettings(settings) {
           splits: settings.splits || {},
           categories: settings.categories || [],
           budgets: settings.budgets || {},
+          forecast: settings.forecast || {},
         }),
       );
     } else localStorage.removeItem(SETTINGS_KEY);
@@ -397,6 +411,7 @@ function settingsPayload() {
     splits: state.settings.splits || {},
     categories: state.settings.categories || [],
     budgets: state.settings.budgets || {},
+    forecast: state.settings.forecast || {},
   };
 }
 
@@ -408,6 +423,7 @@ function cloneSettings() {
     splits: Object.fromEntries(Object.entries(state.settings.splits || {}).map(([k, parts]) => [k, parts.map((part) => ({ ...part }))])),
     categories: (state.settings.categories || []).map((c) => ({ ...c })),
     budgets: Object.fromEntries(Object.entries(state.settings.budgets || {}).map(([k, rows]) => [k, { ...rows }])),
+    forecast: { ...(state.settings.forecast || {}) },
   };
 }
 
@@ -699,17 +715,18 @@ function renderPeriodPicker(selected) {
   const now = currentMonth();
   const target = (key) => (selected ? accountHash(selected.id, key) : '#/accounts');
 
+  const latest = shiftMonth(now, MAX_AHEAD);
   const options = [];
-  for (let back = 0; back < MONTHS_BACK; back += 1) {
+  for (let back = -MAX_AHEAD; back < MONTHS_BACK; back += 1) {
     const key = shiftMonth(now, -back);
-    options.push(el('option', { value: key, text: formatWindow(key, SHOW_MONTHS), selected: key === end }));
+    options.push(el('option', { value: key, text: formatWindow(key, VIEW_COLS), selected: key === end }));
   }
-  if (!options.some((option) => option.value === end)) options.push(el('option', { value: end, text: formatWindow(end, SHOW_MONTHS), selected: true }));
+  if (!options.some((option) => option.value === end)) options.push(el('option', { value: end, text: formatWindow(end, VIEW_COLS), selected: true }));
 
   periodPickerEl.replaceChildren(
     el('a', { class: 'month-btn', href: target(shiftMonth(end, -1)), 'aria-label': 'Earlier months', text: '‹' }),
     el('select', { class: 'month-select month-select--range', 'aria-label': 'Months shown', onchange: (event) => { location.hash = target(event.target.value); } }, options),
-    end < now
+    end < latest
       ? el('a', { class: 'month-btn', href: target(shiftMonth(end, 1)), 'aria-label': 'Later months', text: '›' })
       : el('span', { class: 'month-btn month-btn--disabled', 'aria-hidden': 'true', text: '›' }),
   );
@@ -845,54 +862,77 @@ function renderTrend(values, trend, good, { spark = true } = {}) {
   return el('span', { class: `trend trend--${tone}`, title, role: 'img', 'aria-label': title }, spark ? sparkline(values, months) : null, el('span', { class: 'trend-arrow', text: glyph }));
 }
 
-/** Index of the first month shown as actuals; earlier months in the window feed the trends and forecasts only. */
-function shownFrom() {
-  return Math.max(0, state.sheet.data.months.length - SHOW_MONTHS);
+/**
+ * Which columns are in view. The view is VIEW_COLS months ending on the route's month, which may run
+ * past today. Months up to now are actuals (the earlier fetched months feed only the trends and the
+ * forecasts); the current month, when in view, also gets a forecast column beside its "so far"; later
+ * months are forecasts.
+ */
+function viewLayout() {
+  const data = state.sheet.data;
+  const proj = data.projection;
+  const current = data.months.find((m) => m.current);
+  const ahead = proj && current ? monthDiff(current.key, state.route.period) : 0;
+  const futureCount = proj ? Math.max(0, Math.min(ahead, VIEW_COLS, proj.months.length)) : 0;
+  const actualCount = Math.max(0, VIEW_COLS - futureCount);
+  const first = Math.max(0, data.months.length - actualCount);
+  const currentShown = Boolean(proj) && actualCount > 0;
+  return { first, actualCount, currentShown, futureCount };
+}
+
+/** The forecast columns in view: the current month's full-month forecast (when it is in view), then the months after. */
+function forecastColumns() {
+  const data = state.sheet.data;
+  const proj = data.projection;
+  if (!proj) return [];
+  const { currentShown, futureCount } = viewLayout();
+  const columns = [];
+  if (currentShown) columns.push({ key: data.months[data.months.length - 1].key, closing: proj.balance.currentMonthEnd, current: true });
+  proj.months.slice(0, futureCount).forEach((month, i) => columns.push({ key: month.key, closing: proj.balance.closing[i], current: false }));
+  return columns;
 }
 
 /**
- * The projection cells for one row. `proj` is { line, kind } for a line the viewer can set an amount
+ * The forecast cells for one row. `proj` is { line, kind } for a line the viewer can set an amount
  * for, { value } or { values } for computed rows, or null for an empty run of cells.
  */
 function projCells(proj, label) {
-  const p = state.sheet.data.projection;
-  const cells = [];
-  p.months.forEach((month, i) => {
-    const first = i === 0 ? ' sh-cell--pfirst' : '';
-    if (!proj) {
-      cells.push(el('div', { class: `sh-cell sh-cell--proj${first}` }));
-      return;
-    }
-    const value = proj.line ? proj.line.value : Array.isArray(proj.values) ? proj.values[i] : proj.value;
+  const budgetOnly = state.sheet.data.projection.mode === 'budget';
+  return forecastColumns().map((column, c) => {
+    const first = c === 0 ? ' sh-cell--pfirst' : '';
+    if (!proj) return el('div', { class: `sh-cell sh-cell--proj${first}` });
+    const value = proj.line ? proj.line.value : Array.isArray(proj.values) ? proj.values[c] : proj.value;
     const text = formatCell(value);
     const zero = text === '–' ? ' sh-cell--zero' : '';
-    if (!proj.line) {
-      cells.push(el('div', { class: `sh-cell sh-cell--proj${first}${zero}`, text }));
-      return;
-    }
+    if (!proj.line) return el('div', { class: `sh-cell sh-cell--proj${first}${zero}`, text });
     const { line, kind } = proj;
-    cells.push(
-      el(
-        'button',
-        {
-          class: `sh-cell sh-cell--proj${first}${zero}${line.set ? ' sh-cell--set' : ''}`,
-          type: 'button',
-          'aria-label': `Forecast for ${label}, ${formatMonth(month.key)}: ${text}, ${line.set ? 'set by you' : 'automatic'}. Change it`,
-          title: line.set ? `You set this. Automatic would be ${formatCell(line.auto)}.` : kind === 'in' ? 'Its latest complete month. Tap to set your own amount.' : 'Average of the complete months in view. Tap to set your own amount.',
-          onclick: () => openBudget({ key: line.key, label, line, kind }),
-        },
-        line.set ? el('span', { class: 'sh-set-mark', text: '✎', 'aria-hidden': 'true' }) : null,
-        text,
-      ),
+    const how = line.set ? 'set by you' : budgetOnly ? 'not set' : 'automatic';
+    const hint = line.set
+      ? `You set this. Automatic would be ${formatCell(line.auto)}.`
+      : budgetOnly
+        ? `Nothing set. Automatic would be ${formatCell(line.auto)}. Tap to set an amount.`
+        : kind === 'in'
+          ? 'Its latest complete month. Tap to set your own amount.'
+          : 'Average of the complete months in view. Tap to set your own amount.';
+    return el(
+      'button',
+      {
+        class: `sh-cell sh-cell--proj${first}${zero}${line.set ? ' sh-cell--set' : ''}`,
+        type: 'button',
+        'aria-label': `Forecast for ${label}, ${formatMonth(column.key)}: ${text}, ${how}. Change it`,
+        title: hint,
+        onclick: () => openBudget({ key: line.key, label, line, kind }),
+      },
+      line.set ? el('span', { class: 'sh-set-mark', text: '✎', 'aria-hidden': 'true' }) : null,
+      text,
     );
   });
-  return cells;
 }
 
 function sheetRow({ id = null, label, values, cls, cats = null, sign = null, toggle = null, note = null, trend = id, good = null, proj = null }) {
   const data = state.sheet.data;
   const months = data.months;
-  const first = shownFrom();
+  const { first } = viewLayout();
   const labelChildren = [];
   if (toggle) {
     labelChildren.push(
@@ -926,7 +966,7 @@ function sheetRow({ id = null, label, values, cls, cats = null, sign = null, tog
 
 function sectionRow(label) {
   const data = state.sheet.data;
-  const cells = data.months.slice(shownFrom()).map((month) => el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` }));
+  const cells = data.months.slice(viewLayout().first).map((month) => el('div', { class: `sh-cell${month.current ? ' sh-cell--cur' : ''}` }));
   if (data.projection) cells.push(...projCells(null, label));
   return el('div', { class: 'sh-row sh-row--sec' }, el('div', { class: 'sh-lbl', text: label }), ...cells);
 }
@@ -934,10 +974,13 @@ function sectionRow(label) {
 function renderSheet() {
   const data = state.sheet.data;
   const proj = data.projection;
-  const first = shownFrom();
-  sheetEl.style.setProperty('--cols', String(data.months.length - first));
-  sheetEl.style.setProperty('--pcols', String(proj ? proj.months.length : 0));
-  sheetEl.classList.toggle('sheet--proj', Boolean(proj));
+  const layout = viewLayout();
+  const { first, actualCount } = layout;
+  const columns = forecastColumns();
+  sheetEl.style.setProperty('--cols', String(actualCount));
+  sheetEl.style.setProperty('--pcols', String(columns.length));
+  sheetEl.classList.toggle('sheet--proj', columns.length > 0 && actualCount > 0);
+  sheetEl.classList.toggle('sheet--noactual', columns.length > 0 && actualCount === 0);
   const anyPositive = (values) => values.some((v) => v > 0);
   const rows = [];
 
@@ -960,16 +1003,14 @@ function renderSheet() {
           balanceCell(data.balance.closing[first + i]),
         ),
       ),
-      ...(proj
-        ? proj.months.map((month, i) =>
-            el(
-              'div',
-              { class: `sh-cell sh-cell--proj${i === 0 ? ' sh-cell--pfirst' : ''}`, title: 'Projected balance at the end of the month' },
-              el('span', { class: 'sh-month' }, formatMonth(month.key, { short: true }), el('span', { class: 'sh-so-far sh-so-far--inline', text: 'forecast' })),
-              balanceCell(proj.balance.closing[i]),
-            ),
-          )
-        : []),
+      ...columns.map((column, c) =>
+        el(
+          'div',
+          { class: `sh-cell sh-cell--proj${c === 0 ? ' sh-cell--pfirst' : ''}`, title: column.current ? 'The whole month as forecast, and the balance expected at its end' : 'Projected balance at the end of the month' },
+          el('span', { class: 'sh-month' }, formatMonth(column.key, { short: true }), el('span', { class: 'sh-so-far sh-so-far--inline', text: 'forecast' })),
+          balanceCell(column.closing),
+        ),
+      ),
     ),
   );
 
@@ -1068,24 +1109,27 @@ function renderSheet() {
   sheetToolsSep.hidden = emptyToggle.hidden;
 
   rows.push(sectionRow('Balance'));
-  rows.push(
-    sheetRow({
-      label: 'Opening balance',
-      values: data.balance.opening,
-      cls: 'tot',
-      proj: proj ? { values: [proj.balance.currentMonthEnd, ...proj.balance.closing.slice(0, -1)] } : null,
-    }),
-  );
-  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot', trend: 'bal:closing', good: 'up', proj: proj ? { values: proj.balance.closing } : null }));
+  // Forecast balances: the current month's forecast column opens on its actual opening balance and closes on
+  // the expected month end; each later month opens where the one before closed.
+  const closingCols = columns.map((column) => column.closing);
+  const openingCols = columns.map((column, c) => (c > 0 ? closingCols[c - 1] : column.current ? data.balance.opening[data.months.length - 1] : proj ? proj.balance.currentMonthEnd : null));
+  rows.push(sheetRow({ label: 'Opening balance', values: data.balance.opening, cls: 'tot', proj: proj ? { values: openingCols } : null }));
+  rows.push(sheetRow({ label: 'Closing balance', values: data.balance.closing, cls: 'tot', trend: 'bal:closing', good: 'up', proj: proj ? { values: closingCols } : null }));
 
   for (const button of sheetModeEl.querySelectorAll('.seg-btn')) {
     button.setAttribute('aria-pressed', button.dataset.mode === state.sheetMode ? 'true' : 'false');
+  }
+  forecastModeEl.hidden = !proj;
+  for (const button of forecastModeEl.querySelectorAll('.seg-btn')) {
+    button.setAttribute('aria-pressed', proj && button.dataset.fmode === proj.mode ? 'true' : 'false');
   }
 
   if (proj) {
     const current = data.months.find((m) => m.current);
     const bits = [
-      `Projections: outgoings and transfers at the average of the last ${plural(proj.basis.complete, 'complete month')}, income at its latest month. Tap a forecast to set your own amount.`,
+      proj.mode === 'budget'
+        ? 'Budget mode: only the amounts you set count in the forecasts. Tap a forecast to set one; anything unset counts as nothing.'
+        : `Forecasts: outgoings and transfers at the average of the last ${plural(proj.basis.complete, 'complete month')}, income at its latest month. Tap a forecast to set your own amount.`,
     ];
     if (proj.balance.currentMonthEnd != null && current) {
       bits.push(`Balance now ${formatMoney(proj.balance.now, data.currency)}, expected ${formatMoney(proj.balance.currentMonthEnd, data.currency)} by the end of ${formatMonth(current.key)} once what is still due this month has gone through.`);
@@ -1102,13 +1146,15 @@ function renderSheet() {
     scrolledSheet = state.sheet.key;
     const current = sheetEl.querySelector('.sh-row--head .sh-cell--cur');
     const label = sheetEl.querySelector('.sh-row--head .sh-lbl');
-    sheetWrapEl.scrollLeft = current && label ? Math.max(0, current.offsetLeft - label.offsetWidth) : sheetWrapEl.scrollWidth;
+    if (!current) sheetWrapEl.scrollLeft = sheetWrapEl.scrollWidth;
+    else if (current.offsetLeft + current.offsetWidth > sheetWrapEl.clientWidth) sheetWrapEl.scrollLeft = Math.max(0, current.offsetLeft - (label ? label.offsetWidth : 0));
   }
 }
 
 function renderSheetSkeleton() {
-  sheetEl.style.setProperty('--cols', String(SHOW_MONTHS));
-  sheetEl.classList.remove('sheet--proj');
+  sheetEl.style.setProperty('--cols', String(VIEW_COLS));
+  sheetEl.classList.remove('sheet--proj', 'sheet--noactual');
+  forecastModeEl.hidden = true;
   const rows = [];
   for (let r = 0; r < 12; r += 1) {
     rows.push(
@@ -1116,7 +1162,7 @@ function renderSheetSkeleton() {
         'div',
         { class: `sh-row ${r === 0 ? 'sh-row--head' : 'sh-row--cat'}`, 'aria-hidden': 'true' },
         el('div', { class: 'sh-lbl' }, el('span', { class: 'skeleton', text: 'Category name' })),
-        ...Array.from({ length: SHOW_MONTHS }, () => el('div', { class: 'sh-cell' }, el('span', { class: 'skeleton', text: '0,000.00' }))),
+        ...Array.from({ length: VIEW_COLS }, () => el('div', { class: 'sh-cell' }, el('span', { class: 'skeleton', text: '0,000.00' }))),
       ),
     );
   }
@@ -1878,7 +1924,10 @@ function openBudget({ key, label, line, kind }) {
   const basis = kind === 'in' ? 'its latest complete month' : `the average of the last ${plural(data.projection.basis.complete, 'complete month')}`;
   budgetTitle.textContent = `Forecast for ${label}`;
   budgetSub.textContent = `${account.name} · per month`;
-  budgetAuto.textContent = `Automatic: ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`;
+  budgetAuto.textContent =
+    data.projection.mode === 'budget'
+      ? `Budget mode: only what you set counts. For reference, automatic would be ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`
+      : `Automatic: ${formatMoney(line.auto, currency)}, ${basis}.${line.set ? ` You set ${formatMoney(line.value, currency)}.` : ''}`;
   budgetAmount.value = line.set ? String(line.value) : '';
   budgetClear.hidden = !line.set;
   budgetError.hidden = true;
@@ -2121,6 +2170,7 @@ async function saveSettings(next) {
       splits: body.splits || {},
       categories: body.categories || [],
       budgets: body.budgets || {},
+      forecast: body.forecast || {},
     };
     return;
   }
@@ -2133,6 +2183,7 @@ async function saveSettings(next) {
     splits: next.splits || {},
     categories: next.categories || [],
     budgets: next.budgets || {},
+    forecast: next.forecast || {},
   };
 }
 
@@ -2220,6 +2271,7 @@ function adoptServerSettings(settings) {
     splits: settings.splits || {},
     categories: settings.categories || [],
     budgets: settings.budgets || {},
+    forecast: settings.forecast || {},
   };
 }
 
@@ -2243,7 +2295,7 @@ async function load({ refresh = false } = {}) {
         // The server keeps settings now. Move anything saved in this browser over, once, if the server has none yet.
         if (!state.migrated && !settingsEmpty(local) && serverEmpty) {
           state.migrated = true;
-          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
+          adoptServerSettings({ ...body.settings, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
           try {
             await saveSettings(local);
             writeLocalSettings(null);
@@ -2272,7 +2324,14 @@ async function loadSheet({ account, period, key, refresh = false }) {
   if (state.sheet.data === null) state.cell = null;
   render();
   try {
-    const params = new URLSearchParams({ account: String(account.id), to: period, months: String(SHEET_MONTHS) });
+    // Actuals end at the route's month or now, whichever is earlier; months past now are asked for as forecasts.
+    const now = currentMonth();
+    const params = new URLSearchParams({
+      account: String(account.id),
+      to: period < now ? period : now,
+      months: String(SHEET_MONTHS),
+      ahead: String(Math.max(1, Math.min(MAX_AHEAD, monthDiff(now, period)))),
+    });
     if (refresh) params.set('refresh', '1');
     const password = sessionPassword || readPassword();
     const res = await apiFetch(`/api/sheet?${params}`);
@@ -2324,6 +2383,25 @@ sheetModeEl.addEventListener('click', (event) => {
   state.sheetMode = button.dataset.mode === 'change' ? 'change' : 'amounts';
   writeSheetMode(state.sheetMode);
   render();
+});
+forecastModeEl.addEventListener('click', async (event) => {
+  const button = event.target.closest('.seg-btn');
+  const account = selectedAccount();
+  const data = state.sheet.data;
+  if (!button || !account || !data || !data.projection) return;
+  const mode = button.dataset.fmode === 'budget' ? 'budget' : 'auto';
+  if (mode === data.projection.mode) return;
+  const next = cloneSettings();
+  if (mode === 'budget') next.forecast[String(account.id)] = 'budget';
+  else delete next.forecast[String(account.id)];
+  try {
+    await saveSettings(next);
+  } catch (err) {
+    state.error = err && err.message ? err.message : 'Could not save.';
+    render();
+    return;
+  }
+  ensureSheet({ force: true });
 });
 viewToggleEl.addEventListener('click', (event) => {
   const button = event.target.closest('.seg-btn');

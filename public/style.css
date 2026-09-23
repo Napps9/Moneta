@@ -839,7 +839,7 @@ a.row-name:focus-visible {
 
 .sh-row {
   display: grid;
-  grid-template-columns: 230px repeat(var(--cols), minmax(104px, 1fr));
+  grid-template-columns: 230px repeat(var(--cols), minmax(98px, 1fr));
   border-top: 1px solid var(--line);
 }
 
@@ -850,7 +850,16 @@ a.row-name:focus-visible {
 /* Projections: a second table to the right, kept in the same grid so rows line up. */
 
 .sheet--proj .sh-row {
-  grid-template-columns: 230px repeat(var(--cols), minmax(104px, 1fr)) repeat(var(--pcols), minmax(104px, 1fr));
+  grid-template-columns: 230px repeat(var(--cols), minmax(98px, 1fr)) repeat(var(--pcols), minmax(98px, 1fr));
+}
+
+/* The view can run entirely into the future, with no actual months left in it. */
+.sheet--noactual .sh-row {
+  grid-template-columns: 230px repeat(var(--pcols), minmax(98px, 1fr));
+}
+
+.segmented[hidden] {
+  display: none;
 }
 
 .sh-cell--pfirst {
@@ -975,8 +984,8 @@ button.sh-cell:focus-visible {
 }
 
 .sh-so-far--inline {
-  display: inline;
-  margin-left: 5px;
+  display: block;
+  margin-left: 0;
 }
 
 .sh-lbl--head {
@@ -1175,6 +1184,10 @@ button.sh-cell:focus-visible {
 
   .sheet--proj .sh-row {
     grid-template-columns: 150px repeat(var(--cols), minmax(96px, 1fr)) repeat(var(--pcols), minmax(96px, 1fr));
+  }
+
+  .sheet--noactual .sh-row {
+    grid-template-columns: 150px repeat(var(--pcols), minmax(96px, 1fr));
   }
 
   .sh-row--sub .sh-lbl {

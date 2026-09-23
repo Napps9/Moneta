@@ -6,6 +6,7 @@
  *   splits:       one transaction -> parts [{ category, amount }] when it is shared between categories
  *   categories:   categories and sub-categories added in the app, on top of categories.config.js
  *   budgets:      per account, forecast amounts the viewer set per row, instead of the automatic ones
+ *   forecast:     per account, 'budget' when only those set amounts should count (no automatic guesses)
  *
  * Storage, in order of preference:
  *   - Redis over REST (Upstash): KV_REST_API_URL + KV_REST_API_TOKEN, or
@@ -28,7 +29,7 @@ const MAX_BUDGET_ROWS = 300;
 const BUDGET_KEY_RE = /^(in|out|tr):[a-z0-9_-]{1,64}$/;
 export const MAX_SETTINGS_BYTES = 1024 * 1024;
 
-export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {} });
+export const emptySettings = () => ({ version: 1, accounts: {}, rules: {}, transactions: {}, splits: {}, categories: [], budgets: {}, forecast: {} });
 
 const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -133,6 +134,12 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
     if (n === 0) continue;
     out.budgets[id] = clean;
     budgetAccounts += 1;
+  }
+
+  // Per account, 'budget' when only the amounts the viewer set should count in the forecasts.
+  for (const [account, mode] of Object.entries(isPlainObject(source.forecast) ? source.forecast : {})) {
+    const id = String(account).trim();
+    if (id && mode === 'budget' && Object.keys(out.forecast).length < MAX_ACCOUNTS) out.forecast[id] = 'budget';
   }
 
   return out;

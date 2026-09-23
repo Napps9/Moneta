@@ -84,15 +84,19 @@ export const PROJECTION_MONTHS = 3;
  * 'in:salary', 'tr:out' and so on). Balances chain on from the balance now, first adding what is still
  * expected before the current month ends (the forecast less what has already happened, never below zero).
  */
-export function buildProjection({ months, income, outgoings, transfers, budgets = {}, currentBalance = null, count = PROJECTION_MONTHS }) {
+export const MAX_AHEAD = 12;
+
+export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, count = PROJECTION_MONTHS }) {
   const currentIdx = months.findIndex((m) => m.current);
   if (currentIdx < 0) return null;
+  const budgetOnly = mode === 'budget'; // only amounts the viewer set count; nothing is guessed
+  const ahead = Math.min(Math.max(1, Number.parseInt(count, 10) || PROJECTION_MONTHS), MAX_AHEAD);
   const complete = months.map((m, i) => (!m.current && !m.future ? i : -1)).filter((i) => i >= 0);
   const at = (values, i) => Number(values[i]) || 0;
   const avg = (values) => (complete.length ? round(complete.reduce((sum, i) => sum + at(values, i), 0) / complete.length) : 0);
   const latest = (values) => (complete.length ? round(at(values, complete[complete.length - 1])) : 0);
   const set = (key) => Object.prototype.hasOwnProperty.call(budgets, key) && Number.isFinite(Number(budgets[key]));
-  const line = (key, auto, values) => ({ key, value: set(key) ? round(Number(budgets[key])) : auto, auto, set: set(key), soFar: round(at(values, currentIdx)) });
+  const line = (key, auto, values) => ({ key, value: set(key) ? round(Number(budgets[key])) : budgetOnly ? 0 : auto, auto, set: set(key), soFar: round(at(values, currentIdx)) });
 
   const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, latest(row.values), row.values) }));
   const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', latest(income.uncategorised), income.uncategorised) };
@@ -122,7 +126,7 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
   };
 
   const futureMonths = [];
-  for (let k = 1; k <= count; k += 1) futureMonths.push(monthRange(shiftMonth(months[currentIdx].key, k)));
+  for (let k = 1; k <= ahead; k += 1) futureMonths.push(monthRange(shiftMonth(months[currentIdx].key, k)));
   const closing = futureMonths.map(() => null);
   let currentMonthEnd = null;
   if (currentBalance != null) {
@@ -136,6 +140,7 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
 
   return {
     months: futureMonths,
+    mode: budgetOnly ? 'budget' : 'auto',
     basis: { income: 'latest', outgoings: 'average', complete: complete.length },
     income: { rows: incomeRows, uncategorised: incomeUncategorised, total: incomeTotal },
     outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised, total: outgoingTotal },
@@ -154,6 +159,8 @@ export function buildSheet({
   categories,
   settings = null,
   budgets = {},
+  forecastMode = 'auto',
+  ahead = PROJECTION_MONTHS,
   currentBalance = null,
   today,
   otherAccountNames = [],
@@ -274,6 +281,8 @@ export function buildSheet({
       outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised },
       transfers: { in: transfersIn, out: transfersOut },
       budgets,
+      mode: forecastMode,
+      count: ahead,
       currentBalance,
     }),
     transactions: inWindow,

@@ -183,6 +183,7 @@ export function createSheetHandler({ service = null, auth = null, logger = conso
         accountId,
         to: url.searchParams.get('to'),
         months: url.searchParams.get('months') ?? 6,
+        ahead: url.searchParams.get('ahead') ?? 3,
         refresh: /^(1|true|yes)$/i.test(url.searchParams.get('refresh') ?? ''),
         settings,
       });
