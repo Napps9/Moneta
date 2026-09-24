@@ -2251,6 +2251,19 @@ ledgerEl.addEventListener('close', () => {
 
 // ---------- notices, header, gate ----------
 
+/** When the newest transaction Lunch Flow has for any account is days old, that date; else null. */
+const STALE_AFTER_DAYS = 2;
+function staleSince(data) {
+  let newest = '';
+  for (const account of data.accounts || []) {
+    const latest = account.balance && account.balance.latest;
+    if (latest && latest > newest) newest = latest;
+  }
+  if (!newest) return null;
+  const age = (Date.parse(`${localToday()}T00:00:00Z`) - Date.parse(`${newest}T00:00:00Z`)) / 86400000;
+  return age > STALE_AFTER_DAYS ? newest : null;
+}
+
 function renderNotice() {
   const { data, error, loading } = state;
   const onAccounts = state.route.screen === 'accounts';
@@ -2278,6 +2291,10 @@ function renderNotice() {
     kind = 'warning';
     title = 'Some balances are missing.';
     detail = 'Lunch Flow could not return a balance for every account. Affected accounts are marked below.';
+  } else if (!onAccounts && data && staleSince(data)) {
+    kind = 'warning';
+    title = `Nothing newer than ${formatDay(staleSince(data), { weekday: false })} from Lunch Flow.`;
+    detail = 'That is the newest transaction it has for any account, so it has not fetched from your banks since. Balances here cannot move until it does: check its bank connections and sync there, then Refresh.';
   }
 
   if (!kind || (loading && !data) || state.gate) {
