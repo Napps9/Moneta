@@ -777,6 +777,9 @@ function renderActivityHead(account, sheet) {
   if (balance && balance.treatment === 'credit-limit') parts.push(`${formatMoney(balance.available, balance.currency)} left of ${formatMoney(balance.limit, balance.currency)}`);
   else if (balance && balance.available != null && balance.available !== balance.current) parts.push(`available ${formatMoney(balance.available, balance.currency)}`);
   if (account.error) parts.push(`balance unavailable: ${account.error}`);
+  // How fresh Lunch Flow's data is: the day of the newest transaction it has for this account.
+  const newest = sheet && sheet.transactions ? sheet.transactions.reduce((max, txn) => (txn.date > max ? txn.date : max), '') : '';
+  if (newest) parts.push(`newest transaction ${formatDay(newest)}`);
   if (currency) parts.push(`month-end figures in ${currency}`);
   activityHeadEl.replaceChildren(
     el(
