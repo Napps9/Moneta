@@ -9,6 +9,7 @@
 
 import { describeCategories, mergeCustomCategories, normalizeCategoriesConfig } from './categories.js';
 import { normalizeLedger, reconcileLedger } from './ledger.js';
+import { dedupePending } from './pending.js';
 import { MONTH_RE, buildSheet, monthKey, monthWindow } from './sheet.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -108,7 +109,8 @@ export function createActivityService({
     if (!refresh && hit && hit.expiresAt > now()) {
       return { transactions: hit.transactions, fetchedAt: hit.fetchedAt, cached: true };
     }
-    const transactions = await client.listTransactions(accountId, { from, to, includePending: true });
+    // Pending ones that have since posted under a new id are dropped, so nothing counts twice.
+    const transactions = dedupePending(await client.listTransactions(accountId, { from, to, includePending: true }));
     const fetchedAt = new Date(now()).toISOString();
     cache.delete(key);
     cache.set(key, { transactions, fetchedAt, expiresAt: now() + ttlMs });

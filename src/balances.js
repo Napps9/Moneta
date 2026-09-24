@@ -6,6 +6,7 @@
  * of the cached data for every request, so changing settings never refetches.
  */
 import { classifyAccount, normalizeGroupsConfig } from './groups.js';
+import { dedupePending } from './pending.js';
 import { createMemoryStore, emptySettings, normalizeSettings } from './settings.js';
 
 export async function mapWithConcurrency(items, limit, fn) {
@@ -182,7 +183,7 @@ export function createBalanceService({
     const withRecent = await mapWithConcurrency(withBalances, concurrency, async (account) => {
       if (typeof client.listTransactions !== 'function') return account;
       try {
-        const transactions = await client.listTransactions(account.id, { from, to, includePending: true });
+        const transactions = dedupePending(await client.listTransactions(account.id, { from, to, includePending: true }));
         let pendingNet = 0;
         let pendingCount = 0;
         let latest = null;
@@ -274,7 +275,7 @@ export function createBalanceService({
     if (from > to || typeof client.listTransactions !== 'function') value = { date: anchor.date, net: 0, count: 0 };
     else {
       try {
-        const transactions = await client.listTransactions(account.id, { from, to, includePending: true });
+        const transactions = dedupePending(await client.listTransactions(account.id, { from, to, includePending: true }));
         const amounts = transactions
           .filter((t) => !(excludePending && t.pending))
           .map((t) => Number(t.amount))
