@@ -79,6 +79,25 @@ test('buildSheet sums into categories and months, rolls subs up into parents, an
   assert.match(gym.key, /^id:/);
 });
 
+test('with the balance shown before pending payments, only booked transactions move it and the forecast lets the pending ones through', () => {
+  const transactions = [
+    tx('2026-08-03', -40, 'TESCO STORES', { merchant: 'Tesco' }),
+    tx('2026-09-05', -60, 'TESCO STORES', { merchant: 'Tesco' }),
+    tx('2026-09-20', -104.5, 'PRET A MANGER', { merchant: 'Pret', pending: true }),
+  ];
+  const base = { accountId: 1, transactions, months: monthWindow('2026-09', 2), categories: config, settings: { rules: {}, transactions: {}, splits: {} }, today: '2026-09-22' };
+  // Lunch Flow reports 598.48 with the pending 104.50 taken off; the bank shows 702.98 before it.
+  const reported = buildSheet({ ...base, currentBalance: 598.48 });
+  const before = buildSheet({ ...base, currentBalance: 702.98, balanceExcludesPending: true });
+
+  assert.deepEqual(reported.balance.closing, [762.98, 598.48]);
+  assert.deepEqual(before.balance.closing, [762.98, 702.98], 'the past is the same either way; only the figure now differs');
+  assert.deepEqual(before.outgoings.total, reported.outgoings.total, 'the pending payment counts as spending either way');
+  assert.equal(before.outgoings.total[1], 164.5);
+  assert.equal(before.projection.balance.currentMonthEnd, reported.projection.balance.currentMonthEnd, 'and the month ends up in the same place');
+  assert.equal(before.projection.balance.now, 702.98);
+});
+
 test('buildSheet honours settings and leaves balances empty without a current balance', () => {
   const transactions = [tx('2026-09-05', -60, 'TESCO STORES', { merchant: 'Tesco' })];
   const sheet = buildSheet({

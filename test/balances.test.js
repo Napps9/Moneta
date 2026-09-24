@@ -122,9 +122,11 @@ test('a balance the viewer set stands in for Lunch Flow’s, plus the transactio
   assert.equal(current.balance.available, null);
   assert.deepEqual(current.balance.anchor, { amount: 612.31, date: '2026-09-23', since: -6.25, count: 2, error: null });
   assert.deepEqual(current.settings.anchor, { amount: 612.31, date: '2026-09-23' });
-  assert.deepEqual(client.calls.listTransactions, [
-    { id: 1, from: '2026-09-24', to: '2026-09-25' },
-    { id: 3, from: '2026-09-02', to: '2026-09-25' },
+  // Besides the month of recent transactions fetched for every account, only the anchored ones are asked for what happened since.
+  const anchorCalls = () => client.calls.listTransactions.filter((call) => call.from > '2026-09-01');
+  assert.deepEqual(anchorCalls(), [
+    { id: 1, from: '2026-09-24', to: '2026-09-26' },
+    { id: 3, from: '2026-09-02', to: '2026-09-26' },
   ]);
 
   const card = snapshot.accounts.find((a) => a.id === 3);
@@ -134,9 +136,54 @@ test('a balance the viewer set stands in for Lunch Flow’s, plus the transactio
   assert.equal(card.error, 'no balance today');
 
   await service.getSnapshot({ settings });
-  assert.equal(client.calls.listTransactions.length, 2, 'what happened since is cached like the balances');
+  assert.equal(anchorCalls().length, 2, 'what happened since is cached like the balances');
   await service.getSnapshot({ settings, refresh: true });
-  assert.equal(client.calls.listTransactions.length, 4, 'and refetched on a refresh');
+  assert.equal(anchorCalls().length, 4, 'and refetched on a refresh');
+});
+
+test('pending payments can go back on the balance, as most bank apps show it, and the newest transaction is noted', async () => {
+  const now = () => Date.parse('2026-09-25T12:00:00Z');
+  const client = fakeClient({
+    accounts: ACCOUNTS,
+    balances: {
+      1: { current: 598.48, available: 598.48, currency: 'GBP' },
+      2: { current: 50, available: 50, currency: 'EUR' },
+      3: { current: -20, available: 200, currency: 'USD' },
+    },
+    failures: { 'transactions:3': 'no transactions today' },
+    transactions: {
+      1: [
+        { date: '2026-09-24', amount: -80.5, pending: true },
+        { date: '2026-09-23', amount: -24, pending: true },
+        { date: '2026-09-20', amount: -10, pending: false },
+        { date: '2026-08-01', amount: -999, pending: true }, // outside the month looked at
+      ],
+    },
+  });
+  const service = createBalanceService({ client, now, logger: silent });
+
+  const plain = await service.getSnapshot();
+  const current = plain.accounts.find((a) => a.id === 1);
+  assert.equal(current.balance.current, 598.48, 'as reported by default');
+  assert.deepEqual(current.balance.pending, { net: -104.5, count: 2 });
+  assert.equal(current.balance.latest, '2026-09-24');
+  assert.equal(current.balance.basis, undefined);
+  assert.deepEqual(plain.accounts.find((a) => a.id === 2).balance.pending, { net: 0, count: 0 }, 'nothing pending is still known');
+  assert.equal(plain.accounts.find((a) => a.id === 3).balance.pending, undefined, 'when the transactions cannot be fetched nothing is claimed');
+  assert.deepEqual(
+    client.calls.listTransactions.map((call) => [call.id, call.from, call.to]).sort((a, b) => a[0] - b[0]),
+    [[1, '2026-08-25', '2026-09-26'], [2, '2026-08-25', '2026-09-26'], [3, '2026-08-25', '2026-09-26']],
+    'a month back to tomorrow, for every account',
+  );
+
+  const before = await service.getSnapshot({ settings: { accounts: { 1: { pending: 'exclude' } } } });
+  const shown = before.accounts.find((a) => a.id === 1);
+  assert.equal(shown.balance.current, 702.98, 'the two pending payments go back on');
+  assert.equal(shown.balance.reported, 598.48);
+  assert.equal(shown.balance.available, null);
+  assert.equal(shown.balance.basis, 'before-pending');
+  assert.equal(shown.settings.pending, 'exclude');
+  assert.equal(client.calls.listTransactions.length, 3, 'settings never refetch');
 });
 
 test('settings sent with the request are applied when the store is not persistent', async () => {
@@ -162,7 +209,7 @@ test('settings sent with the request are applied when the store is not persisten
   const current = tuned.accounts.find((a) => a.id === 1);
   assert.equal(current.group, 'savings');
   assert.equal(current.autoGroup, 'spending');
-  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null, pinned: null, anchor: null });
+  assert.deepEqual(current.settings, { group: 'savings', balance: 'reported', limit: null, pinned: null, anchor: null, pending: 'include' });
   assert.equal(current.pinned, null);
   const card = tuned.accounts.find((a) => a.id === 3);
   assert.equal(card.balance.current, -3619.58);

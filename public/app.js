@@ -85,6 +85,8 @@ const editorDetails = $('editor-details');
 const editorDl = $('editor-dl');
 const editorAnchor = $('editor-anchor');
 const editorAnchorNote = $('editor-anchor-note');
+const editorPending = $('editor-pending');
+const editorPendingNote = $('editor-pending-note');
 const editorCancel = $('editor-cancel');
 const editorSave = $('editor-save');
 const catpickerEl = $('catpicker');
@@ -587,6 +589,12 @@ function renderAccountRow(account, { showInstitution = false } = {}) {
     const { anchor } = account.balance;
     meta.push(el('span', { text: `Set by you ${formatDay(anchor.date)}${account.balance.reported != null ? `, Lunch Flow says ${formatMoney(account.balance.reported, account.balance.currency)}` : ''}`, title: `${plural(anchor.count, 'transaction')} since then add up to ${formatMoney(anchor.since, account.balance.currency)}` }));
   } else if (account.balance && account.balance.asOf) meta.push(el('span', { text: `Synced ${relativeTime(account.balance.asOf)}`, title: new Date(account.balance.asOf).toLocaleString() }));
+  if (account.balance && account.balance.pending && account.balance.pending.count && !account.balance.anchor) {
+    const { pending, basis, currency, reported } = account.balance;
+    const other = basis === 'before-pending' ? reported : reported - pending.net;
+    meta.push(el('span', { text: basis === 'before-pending' ? `${formatMoney(other, currency)} once ${plural(pending.count, 'pending payment')} clear` : `${formatMoney(other, currency)} before ${plural(pending.count, 'pending payment')}`, title: `Pending: ${formatMoney(pending.net, currency)}` }));
+  }
+  if (account.balance && account.balance.latest) meta.push(el('span', { text: `Latest transaction ${formatDay(account.balance.latest, { weekday: false })}`, title: 'The newest transaction Lunch Flow has for this account' }));
   if (account.error) meta.push(el('span', { class: 'row-error', text: `Balance unavailable: ${account.error}` }));
 
   const amount = account.balance
@@ -777,6 +785,10 @@ function renderActivityHead(account, sheet) {
   if (balance && balance.treatment === 'credit-limit') parts.push(`${formatMoney(balance.available, balance.currency)} left of ${formatMoney(balance.limit, balance.currency)}`);
   else if (balance && balance.available != null && balance.available !== balance.current) parts.push(`available ${formatMoney(balance.available, balance.currency)}`);
   if (account.error) parts.push(`balance unavailable: ${account.error}`);
+  if (balance && balance.pending && balance.pending.count && !balance.anchor) {
+    const other = balance.basis === 'before-pending' ? balance.reported : balance.reported - balance.pending.net;
+    parts.push(balance.basis === 'before-pending' ? `${formatMoney(other, balance.currency)} once ${plural(balance.pending.count, 'pending payment')} clear` : `${formatMoney(other, balance.currency)} before ${plural(balance.pending.count, 'pending payment')}`);
+  }
   // How fresh Lunch Flow's data is: the day of the newest transaction it has for this account.
   const newest = sheet && sheet.transactions ? sheet.transactions.reduce((max, txn) => (txn.date > max ? txn.date : max), '') : '';
   if (newest) parts.push(`newest transaction ${formatDay(newest)}`);
@@ -2411,6 +2423,16 @@ function openEditor(account) {
   editorAnchorNote.textContent = anchor
     ? `Set on ${formatDay(anchor.date)}. ${since ? `${plural(since.count, 'transaction')} dated after that add up to ${formatMoney(since.since, currency)}, so the balance now is ${formatMoney(anchor.amount + since.since, currency)}.` : ''}${since && since.error ? ` Transactions since could not be fetched: ${since.error}.` : ''} Lunch Flow says ${account.balance && account.balance.reported != null ? formatMoney(account.balance.reported, currency) : 'nothing'}. Clear the box to go back to Lunch Flow's figure.`
     : 'When Lunch Flow is behind your bank, type the balance from your bank app. It stands in for Lunch Flow’s figure, and every transaction dated after today is added to it as it arrives. Everything on the sheet works from it.';
+  // Pending payments: Lunch Flow takes them off; most bank apps show the balance before them.
+  editorPending.value = account.settings && account.settings.pending === 'exclude' ? 'exclude' : 'include';
+  const pending = account.balance && account.balance.pending ? account.balance.pending : null;
+  const reportedNow = account.balance && account.balance.reported != null ? account.balance.reported : null;
+  editorPendingNote.textContent =
+    pending && reportedNow != null
+      ? pending.count
+        ? `Lunch Flow reports ${formatMoney(reportedNow, currency)} with ${plural(pending.count, 'pending payment')} (${formatMoney(pending.net, currency)}) already taken off; before them it is ${formatMoney(reportedNow - pending.net, currency)}. Pick whichever matches your bank app.`
+        : `Lunch Flow reports ${formatMoney(reportedNow, currency)} and nothing is pending right now, so both choices read the same today.`
+      : 'Pick whichever matches your bank app. It makes a difference only while payments are pending.';
   editorError.hidden = true;
   editorError.textContent = '';
   editorHint.textContent =
@@ -2501,6 +2523,8 @@ async function submitEditor(event) {
     }
     entry.anchor = previous && previous.amount === amount ? previous : { amount, date: localToday() };
   }
+  delete entry.pending;
+  if (editorPending.value === 'exclude') entry.pending = 'exclude';
   if (Object.keys(entry).length > 0) next.accounts[id] = entry;
   else delete next.accounts[id];
 

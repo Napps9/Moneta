@@ -69,9 +69,12 @@ test('the service fetches once per period, derives closing balances and honours 
   const balances = createBalanceService({ client, now, logger: silent });
   const service = createActivityService({ client, balances, now, logger: silent });
 
+  // The balance service fetches a month of recent transactions of its own; only the activity's fetches are counted here.
+  const activityCalls = () => calls.filter((call) => call.from !== '2026-08-22');
+
   const august = await service.getActivity({ accountId: '7', from: '2026-08-01', to: '2026-08-31' });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], { id: 7, from: '2026-08-01', to: '2026-09-22', includePending: true }, 'fetches up to today to derive the closing balance');
+  assert.equal(activityCalls().length, 1);
+  assert.deepEqual(activityCalls()[0], { id: 7, from: '2026-08-01', to: '2026-09-22', includePending: true }, 'fetches up to today to derive the closing balance');
   assert.equal(august.account.name, 'Card');
   assert.equal(august.currency, 'GBP');
   assert.equal(august.income, 100);
@@ -82,12 +85,12 @@ test('the service fetches once per period, derives closing balances and honours 
 
   const again = await service.getActivity({ accountId: 7, from: '2026-08-01', to: '2026-08-31' });
   assert.equal(again.cached, true);
-  assert.equal(calls.length, 1);
+  assert.equal(activityCalls().length, 1);
   assert.equal(balanceCalls, 1, 'the balance is cached alongside');
 
   const refreshed = await service.getSheet({ accountId: 7, refresh: true });
   assert.equal(refreshed.cached, false);
-  assert.equal(calls.length, 2, 'a refresh fetches the transactions again');
+  assert.equal(activityCalls().length, 2, 'a refresh fetches the transactions again');
   assert.equal(balanceCalls, 2, 'and asks Lunch Flow for the balance again too');
 
   const treated = await service.getActivity({

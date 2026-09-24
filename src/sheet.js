@@ -105,7 +105,7 @@ function budgetEntry(value) {
   return Number.isFinite(amount) ? { each: amount, months: {} } : null;
 }
 
-export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, count = PROJECTION_MONTHS }) {
+export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, pendingNet = 0, count = PROJECTION_MONTHS }) {
   const currentIdx = months.findIndex((m) => m.current);
   if (currentIdx < 0) return null;
   const budgetOnly = mode === 'budget'; // only amounts the viewer set count; nothing is guessed
@@ -176,7 +176,8 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
   const closing = futureMonths.map(() => null);
   let currentMonthEnd = null;
   if (currentBalance != null) {
-    currentMonthEnd = round(currentBalance + rest.income - rest.outgoings + rest.transfersIn - rest.transfersOut);
+    // pendingNet is what pending payments will take off a balance shown before them (0 otherwise).
+    currentMonthEnd = round(currentBalance + pendingNet + rest.income - rest.outgoings + rest.transfersIn - rest.transfersOut);
     let balance = currentMonthEnd;
     futureMonths.forEach((_, i) => {
       balance = round(balance + monthly[i]);
@@ -208,6 +209,7 @@ export function buildSheet({
   forecastMode = 'auto',
   ahead = PROJECTION_MONTHS,
   currentBalance = null,
+  balanceExcludesPending = false,
   today,
   otherAccountNames = [],
 }) {
@@ -242,13 +244,15 @@ export function buildSheet({
   let afterWindow = 0;
 
   for (const txn of classified) {
+    // With the balance shown before pending payments, only booked transactions move it.
+    const moves = !(balanceExcludesPending && txn.pending);
     if (txn.date > lastTo) {
-      afterWindow += txn.amount;
+      if (moves) afterWindow += txn.amount;
       continue;
     }
     const i = index.get(txn.month);
     if (i === undefined) continue;
-    flows[i] += txn.amount;
+    if (moves) flows[i] += txn.amount;
     const sign = txn.amount >= 0 ? 'in' : 'out';
     for (const part of txn.parts) {
       const bucket = `${part.category ?? ''}|${sign}`;
@@ -330,6 +334,7 @@ export function buildSheet({
       mode: forecastMode,
       count: ahead,
       currentBalance,
+      pendingNet: balanceExcludesPending ? round(classified.filter((txn) => txn.pending).reduce((sum, txn) => sum + txn.amount, 0)) : 0,
     }),
     transactions: inWindow,
     uncategorisedCount: inWindow.filter((txn) => txn.parts.some((part) => part.category === null)).length,

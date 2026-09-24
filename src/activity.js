@@ -199,6 +199,7 @@ export function createActivityService({
       forecastMode: resolved && resolved.forecast && resolved.forecast[String(account.id)] === 'budget' ? 'budget' : 'auto',
       ahead: Number.parseInt(ahead, 10) || 3,
       currentBalance: account.balance ? account.balance.current : null,
+      balanceExcludesPending: Boolean(account.balance && account.balance.basis === 'before-pending'),
       today,
       otherAccountNames: snapshot.accounts.filter((a) => String(a.id) !== String(account.id)).map((a) => a.name),
     });

@@ -80,12 +80,19 @@ export function applyTreatment(account, setting = {}) {
   const reported = account.balance ? account.balance.current : null;
   const currency = (account.balance && account.balance.currency) || account.currency || null;
   const { asOf = null, details = null } = account.balance || {};
-  const current = anchored ? Math.round((setting.anchor.amount + anchored.net) * 100) / 100 : reported;
-  const available = anchored ? null : account.balance.available;
+  // Lunch Flow reports the balance with pending payments already taken off. Most bank apps show it
+  // before them, so when the viewer asks for that, the pending ones go back on.
+  const recent = account.recent || null;
+  const beforePending = setting.pending === 'exclude';
+  const pendingBack = beforePending && recent && !anchored ? -recent.pendingNet : 0;
+  const current = Math.round((anchored ? setting.anchor.amount + anchored.net : reported + pendingBack) * 100) / 100;
+  const available = anchored || pendingBack ? null : account.balance.available;
   const mode = setting.balance ?? 'reported';
   const extra = {
     ...(asOf ? { asOf } : {}),
     ...(details ? { details } : {}),
+    ...(recent ? { pending: { net: recent.pendingNet, count: recent.pendingCount }, latest: recent.latest } : {}),
+    ...(beforePending ? { basis: 'before-pending' } : {}),
     ...(anchored ? { anchor: { amount: setting.anchor.amount, date: setting.anchor.date, since: anchored.net, count: anchored.count, error: anchored.error || null } } : {}),
   };
 
@@ -113,7 +120,7 @@ export function assembleSnapshot(raw, groupsConfig, settings = emptySettings()) 
       group,
       autoGroup,
       pinned: setting.pinned ?? null,
-      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null, pinned: setting.pinned ?? null, anchor: setting.anchor ?? null },
+      settings: { group: setting.group ?? null, balance: setting.balance ?? 'reported', limit: setting.limit ?? null, pinned: setting.pinned ?? null, anchor: setting.anchor ?? null, pending: setting.pending ?? 'include' },
     };
   });
   const groups = groupsConfig.groups.map((group) => {
@@ -128,6 +135,9 @@ export function assembleSnapshot(raw, groupsConfig, settings = emptySettings()) 
     partial: accounts.some((account) => account.error !== null),
   };
 }
+
+// How far back to look for pending transactions and the newest one Lunch Flow has.
+const RECENT_DAYS = 31;
 
 export function createBalanceService({
   client,
@@ -163,7 +173,35 @@ export function createBalanceService({
         return { ...account, balance: null, error: message };
       }
     });
-    return { fetchedAt: new Date(now()).toISOString(), accounts: withBalances };
+    // The last month's transactions per account: the pending ones, which most bank apps leave
+    // out of the balance they show while Lunch Flow takes them off, and the newest date, which
+    // says how fresh Lunch Flow's data is.
+    // Up to tomorrow, so today's transactions come back whatever the API makes of a bare date.
+    const to = new Date(now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const from = new Date(now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const withRecent = await mapWithConcurrency(withBalances, concurrency, async (account) => {
+      if (typeof client.listTransactions !== 'function') return account;
+      try {
+        const transactions = await client.listTransactions(account.id, { from, to, includePending: true });
+        let pendingNet = 0;
+        let pendingCount = 0;
+        let latest = null;
+        for (const txn of transactions) {
+          const amount = Number(txn.amount);
+          if (txn.pending && Number.isFinite(amount)) {
+            pendingNet += amount;
+            pendingCount += 1;
+          }
+          if (typeof txn.date === 'string' && (!latest || txn.date > latest)) latest = txn.date;
+        }
+        return { ...account, recent: { pendingNet: Math.round(pendingNet * 100) / 100, pendingCount, latest } };
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        logger.warn?.(`Recent transactions unavailable for account ${account.id} (${account.name}): ${message}`);
+        return { ...account, recent: null };
+      }
+    });
+    return { fetchedAt: new Date(now()).toISOString(), accounts: withRecent };
   }
 
   /** Cached raw accounts, refreshed when expired or asked to. */
@@ -226,18 +264,21 @@ export function createBalanceService({
   const sinceCache = new Map();
   const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);
   const dayAfter = (date) => isoDate(Date.parse(`${date}T12:00:00Z`) + 24 * 60 * 60 * 1000);
-  async function sinceAnchor(account, anchor, refresh) {
-    const key = `${account.id}|${anchor.date}`;
+  async function sinceAnchor(account, anchor, refresh, excludePending = false) {
+    const key = `${account.id}|${anchor.date}|${excludePending ? 'booked' : 'all'}`;
     const hit = sinceCache.get(key);
     if (!refresh && hit && hit.expiresAt > now()) return hit.value;
     const from = dayAfter(anchor.date);
-    const to = isoDate(now());
+    const to = isoDate(now() + 24 * 60 * 60 * 1000); // up to tomorrow, so today's transactions come back
     let value;
     if (from > to || typeof client.listTransactions !== 'function') value = { date: anchor.date, net: 0, count: 0 };
     else {
       try {
         const transactions = await client.listTransactions(account.id, { from, to, includePending: true });
-        const amounts = transactions.map((t) => Number(t.amount)).filter((n) => Number.isFinite(n));
+        const amounts = transactions
+          .filter((t) => !(excludePending && t.pending))
+          .map((t) => Number(t.amount))
+          .filter((n) => Number.isFinite(n));
         value = { date: anchor.date, net: Math.round(amounts.reduce((sum, n) => sum + n, 0) * 100) / 100, count: amounts.length };
       } catch (err) {
         const message = err && err.message ? err.message : String(err);
@@ -254,7 +295,7 @@ export function createBalanceService({
     const anchored = await Promise.all(
       raw.accounts.map(async (account) => {
         const setting = resolved.settings.accounts[String(account.id)];
-        return setting && setting.anchor ? { ...account, sinceAnchor: await sinceAnchor(account, setting.anchor, refresh) } : account;
+        return setting && setting.anchor ? { ...account, sinceAnchor: await sinceAnchor(account, setting.anchor, refresh, setting.pending === 'exclude') } : account;
       }),
     );
     return {

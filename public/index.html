@@ -110,6 +110,15 @@
         <p id="editor-explain" class="editor-explain"></p>
 
         <label class="field">
+          <span>Pending payments</span>
+          <select id="editor-pending">
+            <option value="include">Already taken off, as Lunch Flow reports it</option>
+            <option value="exclude">Not yet taken off, as most bank apps show it</option>
+          </select>
+        </label>
+        <p id="editor-pending-note" class="editor-explain"></p>
+
+        <label class="field">
           <span>Balance now, as your bank shows it</span>
           <input id="editor-anchor" type="number" inputmode="decimal" step="0.01" placeholder="Leave blank to use Lunch Flow's figure" />
         </label>

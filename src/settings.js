@@ -98,6 +98,9 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
       if (Number.isFinite(amount) && DATE_RE.test(date)) entry.anchor = { amount: Math.round(amount * 100) / 100, date };
     }
 
+    // Show the balance before pending payments, as most high-street bank apps do.
+    if (value.pending === 'exclude') entry.pending = 'exclude';
+
     if (Object.keys(entry).length > 0) {
       out.accounts[id] = entry;
       count += 1;
