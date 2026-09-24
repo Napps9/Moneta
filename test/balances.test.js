@@ -176,13 +176,28 @@ test('pending payments can go back on the balance, as most bank apps show it, an
     'a month back to tomorrow, for every account',
   );
 
+  assert.deepEqual(current.balance.alt, { amount: 702.98, cleared: false }, 'the other way of seeing it: before the pending payments');
+
   const before = await service.getSnapshot({ settings: { accounts: { 1: { pending: 'exclude' } } } });
   const shown = before.accounts.find((a) => a.id === 1);
   assert.equal(shown.balance.current, 702.98, 'the two pending payments go back on');
   assert.equal(shown.balance.reported, 598.48);
   assert.equal(shown.balance.available, null);
   assert.equal(shown.balance.basis, 'before-pending');
+  assert.deepEqual(shown.balance.alt, { amount: 598.48, cleared: true });
   assert.equal(shown.settings.pending, 'exclude');
+
+  // Lunch Flow itself set to send the booked balance: nothing goes back on, but the balance still moves only as payments post.
+  const booked = await service.getSnapshot({ settings: { accounts: { 1: { pending: 'booked' } } } });
+  const asBooked = booked.accounts.find((a) => a.id === 1);
+  assert.equal(asBooked.balance.current, 598.48);
+  assert.equal(asBooked.balance.basis, 'before-pending');
+  assert.deepEqual(asBooked.balance.alt, { amount: 493.98, cleared: true }, 'once the pending payments clear');
+  assert.equal(asBooked.settings.pending, 'booked');
+
+  // Treatments apply to the other figure too.
+  const owed = await service.getSnapshot({ settings: { accounts: { 1: { balance: 'negate' } } } });
+  assert.deepEqual(owed.accounts.find((a) => a.id === 1).balance.alt, { amount: -702.98, cleared: false });
   assert.equal(client.calls.listTransactions.length, 3, 'settings never refetch');
 });
 

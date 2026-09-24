@@ -112,8 +112,9 @@
         <label class="field">
           <span>Pending payments</span>
           <select id="editor-pending">
-            <option value="include">Already taken off, as Lunch Flow reports it</option>
-            <option value="exclude">Not yet taken off, as most bank apps show it</option>
+            <option value="include">Lunch Flow sends the available balance, pending taken off (its default)</option>
+            <option value="exclude">Same, but show it before pending, as most bank apps do</option>
+            <option value="booked">Lunch Flow sends the booked balance, before pending (its Balance tab)</option>
           </select>
         </label>
         <p id="editor-pending-note" class="editor-explain"></p>

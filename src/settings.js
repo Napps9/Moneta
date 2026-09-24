@@ -98,8 +98,9 @@ export function normalizeSettings(raw, groupsConfig, categoriesConfig = null) {
       if (Number.isFinite(amount) && DATE_RE.test(date)) entry.anchor = { amount: Math.round(amount * 100) / 100, date };
     }
 
-    // Show the balance before pending payments, as most high-street bank apps do.
-    if (value.pending === 'exclude') entry.pending = 'exclude';
+    // Pending payments: 'exclude' puts them back on Lunch Flow's figure to show the balance before
+    // them, as most bank apps do; 'booked' says Lunch Flow itself is set to send that balance.
+    if (value.pending === 'exclude' || value.pending === 'booked') entry.pending = value.pending;
 
     if (Object.keys(entry).length > 0) {
       out.accounts[id] = entry;

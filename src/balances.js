@@ -81,29 +81,43 @@ export function applyTreatment(account, setting = {}) {
   const reported = account.balance ? account.balance.current : null;
   const currency = (account.balance && account.balance.currency) || account.currency || null;
   const { asOf = null, details = null } = account.balance || {};
-  // Lunch Flow reports the balance with pending payments already taken off. Most bank apps show it
-  // before them, so when the viewer asks for that, the pending ones go back on.
+  // Pending payments. By default Lunch Flow sends the balance with them already taken off
+  // ('include'). Most bank apps show it before them: either the viewer asks for that here
+  // ('exclude', the pending ones go back on), or Lunch Flow itself is set to send the booked
+  // balance ('booked', nothing to add). Either way the balance then moves only as payments post.
   const recent = account.recent || null;
-  const beforePending = setting.pending === 'exclude';
-  const pendingBack = beforePending && recent && !anchored ? -recent.pendingNet : 0;
-  const current = Math.round((anchored ? setting.anchor.amount + anchored.net : reported + pendingBack) * 100) / 100;
+  const pendingMode = setting.pending === 'exclude' || setting.pending === 'booked' ? setting.pending : 'include';
+  const beforePending = pendingMode !== 'include';
+  const pendingBack = pendingMode === 'exclude' && recent && !anchored ? -recent.pendingNet : 0;
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const current = round2(anchored ? setting.anchor.amount + anchored.net : reported + pendingBack);
   const available = anchored || pendingBack ? null : account.balance.available;
+  // The other way of looking at it: before the pending payments, or once they have cleared.
+  const alt =
+    recent && recent.pendingCount && !anchored
+      ? pendingMode === 'include'
+        ? { amount: round2(reported - recent.pendingNet), cleared: false }
+        : { amount: round2(pendingMode === 'exclude' ? reported : reported + recent.pendingNet), cleared: true }
+      : null;
   const mode = setting.balance ?? 'reported';
+  const limited = mode === 'credit-limit' && Number.isFinite(setting.limit);
+  const treat = (value) => (mode === 'negate' ? -value : limited ? -(setting.limit - value) : value);
   const extra = {
     ...(asOf ? { asOf } : {}),
     ...(details ? { details } : {}),
     ...(recent ? { pending: { net: recent.pendingNet, count: recent.pendingCount }, latest: recent.latest } : {}),
     ...(beforePending ? { basis: 'before-pending' } : {}),
+    ...(alt ? { alt: { amount: treat(alt.amount), cleared: alt.cleared } } : {}),
     ...(anchored ? { anchor: { amount: setting.anchor.amount, date: setting.anchor.date, since: anchored.net, count: anchored.count, error: anchored.error || null } } : {}),
   };
 
   if (mode === 'negate') {
-    return { ...account, balance: { current: -current, available, currency, treatment: mode, reported, ...extra } };
+    return { ...account, balance: { current: treat(current), available, currency, treatment: mode, reported, ...extra } };
   }
-  if (mode === 'credit-limit' && Number.isFinite(setting.limit)) {
+  if (limited) {
     return {
       ...account,
-      balance: { current: -(setting.limit - current), available: current, currency, treatment: mode, limit: setting.limit, reported, ...extra },
+      balance: { current: treat(current), available: current, currency, treatment: mode, limit: setting.limit, reported, ...extra },
     };
   }
   return { ...account, balance: { current, available, currency, treatment: 'reported', reported, ...extra } };
