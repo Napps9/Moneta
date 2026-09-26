@@ -176,6 +176,46 @@ test('the projection runs outgoings at their average, income at its latest month
   assert.equal(past.projection, null, 'nothing to project from a window that ended in the past');
 });
 
+test('a line that has already passed its forecast this month runs at the actual so far', () => {
+  const months = monthWindow('2026-09', 4);
+  const transactions = [
+    tx('2026-06-05', -100, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-07-05', -200, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-08-05', -300, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-09-05', -250, 'TESCO', { merchant: 'Tesco' }),
+    tx('2026-06-25', 2000, 'ACME LTD SALARY'),
+    tx('2026-07-25', 2000, 'ACME LTD SALARY'),
+    tx('2026-08-25', 2600, 'ACME LTD SALARY'),
+    tx('2026-09-20', 3000, 'ACME LTD SALARY'),
+    tx('2026-07-10', -60, 'PUREGYM', { merchant: 'PureGym' }),
+    tx('2026-09-10', -50, 'PUREGYM', { merchant: 'PureGym' }),
+    tx('2026-08-15', -300, 'POT TRANSFER TO SAVINGS POT'),
+  ];
+  const build = (budgets, extra = {}) =>
+    buildSheet({ accountId: 1, transactions, months, categories: config, settings: { rules: {}, transactions: {}, splits: {} }, budgets, currentBalance: 1000, today: '2026-09-22', ...extra }).projection;
+  const row = (rows, id) => rows.find((r) => r.id === id);
+
+  const p = build({});
+  const groceries = row(p.outgoings.rows, 'groceries');
+  assert.deepEqual([groceries.value, groceries.planned, groceries.raised, groceries.soFar], [250, 200, true, 250], 'raised from the 200 average to the 250 already spent');
+  assert.deepEqual(groceries.values, [200, 200, 200], 'the months ahead keep their forecast');
+  const salary = row(p.income.rows, 'salary');
+  assert.deepEqual([salary.value, salary.planned, salary.raised], [3000, 2600, true], 'income that has come in above its forecast raises it too');
+  const health = row(p.outgoings.rows, 'health');
+  assert.deepEqual([row(health.subs, 'gym').value, row(health.subs, 'gym').raised], [50, true]);
+  assert.deepEqual([health.value, health.planned, health.raised], [50, 20, true], 'a group running at the sum of its subs is raised when one of them is');
+  assert.deepEqual([p.transfers.out.value, p.transfers.out.raised], [100, false], 'a line still under its forecast is left alone');
+  assert.deepEqual([p.income.total.now, p.income.total.planned, p.outgoings.total.now, p.outgoings.total.planned], [3000, 2600, 300, 220], 'totals follow');
+  assert.equal(p.net.now, 2700);
+  assert.equal(p.balance.currentMonthEnd, 1000 - 100, 'the balance already holds what has happened; only the transfer is still to come');
+
+  const set = row(build({ 'out:groceries': 180 }).outgoings.rows, 'groceries');
+  assert.deepEqual([set.value, set.planned, set.raised, set.set, set.values], [250, 180, true, true, [180, 180, 180]], 'an amount you set is passed too, but stays set for the months ahead');
+
+  const budget = build({}, { forecastMode: 'budget' });
+  assert.deepEqual([row(budget.income.rows, 'salary').value, row(budget.income.rows, 'salary').planned], [3000, 0], 'in budget mode an unset line still counts what has already happened');
+});
+
 test('trendOf says whether a row is rising, falling or steady over the complete months', () => {
   const months = monthWindow('2026-09', 6).map((m) => ({ ...m, current: m.key === '2026-09', future: false }));
   const up = trendOf([100, 120, 140, 160, 180, 5], months);

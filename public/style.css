@@ -13,6 +13,7 @@
   --good: #0ca30c;
   --good-text: #006300;
   --warning: #fab219;
+  --warning-text: #8a5a00;
   --critical: #d03b3b;
   --rule: #a8a69f;
   --wash: rgba(42, 120, 214, 0.1);
@@ -33,6 +34,7 @@
     --ring: rgba(255, 255, 255, 0.1);
     --accent: #3987e5;
     --good-text: #0ca30c;
+    --warning-text: #fab219;
     --rule: #4a4a47;
     --wash: rgba(57, 135, 229, 0.12);
   }
@@ -50,6 +52,7 @@
   --ring: rgba(255, 255, 255, 0.1);
   --accent: #3987e5;
   --good-text: #0ca30c;
+  --warning-text: #fab219;
   --rule: #4a4a47;
   --wash: rgba(57, 135, 229, 0.12);
 }
@@ -888,6 +891,18 @@ a.row-name:focus-visible {
   margin-right: 3px;
   font-size: 10px;
   vertical-align: 1px;
+}
+
+/* This month's forecast raised to the actual so far, because the line has already passed it. */
+.sh-row .sh-cell.sh-cell--raised {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+
+.sh-raise-mark {
+  display: inline-block;
+  margin-right: 3px;
+  font-size: 11px;
 }
 
 .btn--ghost[hidden] {

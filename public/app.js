@@ -959,23 +959,29 @@ function projCells(proj, label) {
     if (!proj.line) return el('div', { class: `sh-cell sh-cell--proj${first}${zero}`, text });
     const { line, kind } = proj;
     const setHere = line.setMonths ? line.setMonths[column.key] : line.set ? 'each' : null;
+    // This month's forecast rises to the actual when a line has already passed it.
+    const raised = column.current && line.raised;
     const how = setHere === 'month' ? 'set by you for this month' : setHere ? 'set by you for every month' : budgetOnly ? 'not set' : 'automatic';
-    const hint = setHere
+    const base = setHere
       ? `${setHere === 'month' ? 'Set for this month.' : 'Set for every month.'} Automatic would be ${formatCell(line.auto)}. Tap to change it.`
       : budgetOnly
         ? `Nothing set. Automatic would be ${formatCell(line.auto)}. Tap to set an amount.`
         : kind === 'in'
           ? 'Its latest complete month. Tap to set your own amount, for every month or just this one.'
           : 'Average of the complete months in view. Tap to set your own amount, for every month or just this one.';
+    const hint = raised
+      ? `Raised to what has already ${kind === 'in' ? 'come in' : 'gone out'} this month, past the ${formatCell(line.planned)} forecast. ${base}`
+      : base;
     return el(
       'button',
       {
-        class: `sh-cell sh-cell--proj${first}${zero}${setHere ? ' sh-cell--set' : ''}`,
+        class: `sh-cell sh-cell--proj${first}${zero}${setHere ? ' sh-cell--set' : ''}${raised ? ' sh-cell--raised' : ''}`,
         type: 'button',
-        'aria-label': `Forecast for ${label}, ${formatMonth(column.key)}: ${text}, ${how}. Change it`,
+        'aria-label': `Forecast for ${label}, ${formatMonth(column.key)}: ${text}, ${raised ? `raised from ${formatCell(line.planned)} to what has already happened, ` : ''}${how}. Change it`,
         title: hint,
         onclick: () => openBudget({ key: line.key, label, line, kind, month: column.key }),
       },
+      raised ? el('span', { class: 'sh-raise-mark', text: '↑', 'aria-hidden': 'true' }) : null,
       setHere ? el('span', { class: 'sh-set-mark', text: setHere === 'month' ? '◆' : '✎', 'aria-hidden': 'true' }) : null,
       text,
     );
@@ -1184,6 +1190,19 @@ function renderSheet() {
         ? 'Budget mode: only the amounts you set count in the forecasts. Tap a forecast to set one; anything unset counts as nothing.'
         : `Forecasts: outgoings and transfers at the average of the last ${plural(proj.basis.complete, 'complete month')}, income at its latest month. Tap a forecast to set your own amount.`,
     ];
+    // Lines this month has already passed: their forecast for this month runs at the actual so far.
+    const leaves = [
+      ...proj.income.rows,
+      proj.income.uncategorised,
+      ...proj.outgoings.rows.flatMap((row) => (row.subs && !row.set ? row.subs : [row])),
+      proj.outgoings.uncategorised,
+      proj.transfers.in,
+      proj.transfers.out,
+    ];
+    const raisedCount = leaves.filter((item) => item && item.raised).length;
+    if (raisedCount && current) {
+      bits.push(`${plural(raisedCount, 'line')} ${raisedCount === 1 ? 'has' : 'have'} already passed ${raisedCount === 1 ? 'its' : 'their'} forecast for ${formatMonth(current.key)}, so ${raisedCount === 1 ? 'it runs' : 'they run'} at the actual so far (marked ↑).`);
+    }
     if (proj.balance.currentMonthEnd != null && current) {
       bits.push(`Balance now ${formatMoney(proj.balance.now, data.currency)}, expected ${formatMoney(proj.balance.currentMonthEnd, data.currency)} by the end of ${formatMonth(current.key)} once what is still due this month has gone through.`);
     }
@@ -1999,10 +2018,15 @@ function openBudget({ key, label, line, kind, month }) {
   state.budget = { key, accountId: String(account.id), accountName: account.name, line, month, currency: data.currency };
   const basis = kind === 'in' ? 'its latest complete month' : `the average of the last ${plural(data.projection.basis.complete, 'complete month')}`;
   budgetTitle.textContent = `Forecast for ${label}`;
+  const currentMonth = data.months.find((m) => m.current);
+  const raisedNote =
+    line.raised && currentMonth && month === currentMonth.key
+      ? ` ${formatMonth(month)} has already reached ${formatMoney(line.soFar, data.currency)}, past the ${formatMoney(line.planned, data.currency)} forecast, so this month runs at that until it ends. What you set here still applies to the months ahead.`
+      : '';
   budgetAuto.textContent =
-    data.projection.mode === 'budget'
+    (data.projection.mode === 'budget'
       ? `Budget mode: only what you set counts. For reference, automatic would be ${formatMoney(line.auto, data.currency)}, ${basis}.`
-      : `Automatic: ${formatMoney(line.auto, data.currency)}, ${basis}.`;
+      : `Automatic: ${formatMoney(line.auto, data.currency)}, ${basis}.`) + raisedNote;
   budgetMonthLabel.textContent = `${formatMonth(month)} only`;
   // Open on the month's own amount when it has one, otherwise on the amount for every month.
   budgetMonth.checked = parts.months[month] != null;

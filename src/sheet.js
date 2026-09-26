@@ -137,7 +137,11 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
     }
     return { key, set: Boolean(entry), each: entry ? entry.each : null, value: round(pick(currentKey)), values: keys.map((monthKey) => round(pick(monthKey))), setMonths };
   };
-  const line = (key, auto, values) => ({ ...forecast(key, () => (budgetOnly ? 0 : auto)), auto, soFar: round(at(values, currentIdx)) });
+  // This month's forecast can never be less than what has already happened: a line that has passed
+  // it runs at the actual so far instead. The planned figure is kept alongside, and nothing stored changes.
+  const raise = (item, soFar) =>
+    soFar > item.value ? { ...item, value: soFar, planned: item.value, raised: true, soFar } : { ...item, planned: item.value, raised: false, soFar };
+  const line = (key, auto, values) => raise({ ...forecast(key, () => (budgetOnly ? 0 : auto)), auto }, round(at(values, currentIdx)));
 
   const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, latest(row.values), row.values) }));
   const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', latest(income.uncategorised), income.uncategorised) };
@@ -148,7 +152,10 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
     const sumNow = sum(subs.map((sub) => sub.value));
     const sumMonths = keys.map((_, i) => sum(subs.map((sub) => sub.values[i])));
     const group = forecast(`out:${row.id}`, (monthKey) => (monthKey === currentKey ? sumNow : sumMonths[keys.indexOf(monthKey)]));
-    return { id: row.id, label: row.label, ...group, auto: sumNow, soFar: round(at(row.values, currentIdx)), subs };
+    const raised = raise({ ...group, auto: sumNow }, round(at(row.values, currentIdx)));
+    // A group running at the sum of its subs is raised when any of them is; its plan is the sum of theirs.
+    if (!group.set && subs.some((sub) => sub.raised)) Object.assign(raised, { raised: true, planned: sum(subs.map((sub) => sub.planned)) });
+    return { id: row.id, label: row.label, ...raised, subs };
   });
   const outgoingUncategorised = { id: null, label: 'Uncategorised', ...line('out:none', avg(outgoings.uncategorised), outgoings.uncategorised) };
   const transfersIn = line('tr:in', avg(transfers.in), transfers.in);
@@ -156,6 +163,7 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
 
   const totals = (rows, uncategorised) => ({
     now: sum([...rows.map((row) => row.value), uncategorised.value]),
+    planned: sum([...rows.map((row) => row.planned), uncategorised.planned]),
     months: keys.map((_, i) => sum([...rows.map((row) => row.values[i]), uncategorised.values[i]])),
   });
   const incomeTotal = totals(incomeRows, incomeUncategorised);

@@ -170,7 +170,9 @@ test('GET and POST /api/sheet return categories by month for an account', async 
     body: JSON.stringify({ settings: { budgets: { 101: { 'out:groceries': 123.45 } } } }),
   });
   const withBudget = (await budgeted.json()).projection.outgoings.rows.find((r) => r.id === 'groceries');
-  assert.deepEqual([withBudget.value, withBudget.set], [123.45, true]);
+  assert.deepEqual([withBudget.planned, withBudget.set, withBudget.values], [123.45, true, [123.45, 123.45, 123.45]]);
+  assert.equal(withBudget.value, Math.max(123.45, withBudget.soFar), 'this month runs at the budget, or at what has already been spent once that is more');
+  assert.equal(withBudget.raised, withBudget.soFar > 123.45);
 
   const further = await fetch(`${base}/api/sheet?account=101&months=3&ahead=5`, {
     method: 'POST',
@@ -180,9 +182,12 @@ test('GET and POST /api/sheet return categories by month for an account', async 
   const budgetOnly = (await further.json()).projection;
   assert.equal(budgetOnly.months.length, 5, 'ahead sets how many months are projected');
   assert.equal(budgetOnly.mode, 'budget');
-  assert.equal(budgetOnly.outgoings.rows.find((r) => r.id === 'groceries').value, 100);
-  assert.equal(budgetOnly.income.rows.find((r) => r.id === 'salary').value, 0, 'in budget mode nothing is guessed');
-  assert.ok(budgetOnly.income.rows.find((r) => r.id === 'salary').auto > 0, 'the automatic figure is still there for reference');
+  const groceriesOnly = budgetOnly.outgoings.rows.find((r) => r.id === 'groceries');
+  assert.deepEqual([groceriesOnly.planned, groceriesOnly.values[0]], [100, 100]);
+  const salaryOnly = budgetOnly.income.rows.find((r) => r.id === 'salary');
+  assert.deepEqual([salaryOnly.planned, salaryOnly.values[0]], [0, 0], 'in budget mode nothing is guessed');
+  assert.equal(salaryOnly.value, salaryOnly.soFar, 'but this month still counts what has already come in');
+  assert.ok(salaryOnly.auto > 0, 'the automatic figure is still there for reference');
 
   const merchant = sheet.transactions.find((t) => t.category === 'groceries');
   const posted = await fetch(`${base}/api/sheet?account=101&months=3`, {
