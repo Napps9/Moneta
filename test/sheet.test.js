@@ -216,6 +216,35 @@ test('a line that has already passed its forecast this month runs at the actual 
   assert.deepEqual([row(budget.income.rows, 'salary').value, row(budget.income.rows, 'salary').planned], [3000, 0], 'in budget mode an unset line still counts what has already happened');
 });
 
+test('forecasts learn from the year behind the sheet, not just the months in view', () => {
+  // Groceries stepped up from 100 to 300 a month in March; only August and September are in view.
+  const transactions = [];
+  for (let m = 0; m < 12; m += 1) {
+    const key = shiftMonth('2025-09', m);
+    transactions.push(tx(`${key}-05`, key < '2026-03' ? -100 : -300, 'TESCO', { merchant: 'Tesco' }));
+  }
+  transactions.push(tx('2026-09-05', -120, 'TESCO', { merchant: 'Tesco' }));
+  const build = (historyFrom, list = transactions) =>
+    buildSheet({ accountId: 1, transactions: list, months: monthWindow('2026-09', 2), categories: config, settings: { rules: {}, transactions: {}, splits: {} }, currentBalance: 1000, today: '2026-09-22', historyFrom }).projection;
+  const row = (rows, id) => rows.find((r) => r.id === id);
+
+  const p = build('2025-09-01');
+  assert.equal(p.basis.complete, 12, 'twelve complete months of history');
+  const groceries = row(p.outgoings.rows, 'groceries');
+  assert.deepEqual([groceries.value, groceries.learn.method, groceries.learn.tested], [300, 'latest', 6], 'the step up is learned: last month beats the average');
+  assert.deepEqual([groceries.learn.error, groceries.learn.baselineError], [33.33, 116.67], 'only March, the month of the step, is missed; the average lags for months');
+  assert.ok(p.accuracy.outgoings && p.accuracy.outgoings.tested === 6);
+  assert.equal(p.accuracy.income, null, 'no income history to judge');
+
+  // A provider that kept only from April although a year was asked for: April may be partial, so history starts in May.
+  const short = build('2025-09-01', transactions.filter((t) => t.date >= '2026-04-01'));
+  assert.equal(short.basis.complete, 4, 'May to August');
+
+  // An amount set by hand is checked against the same history.
+  const setLine = row(buildSheet({ accountId: 1, transactions, months: monthWindow('2026-09', 2), categories: config, settings: { rules: {}, transactions: {}, splits: {} }, budgets: { 'out:groceries': 250 }, currentBalance: 1000, today: '2026-09-22', historyFrom: '2025-09-01' }).projection.outgoings.rows, 'groceries');
+  assert.deepEqual(setLine.setCheck, { tested: 6, error: 50 }, '250 against 300 a month');
+});
+
 test('trendOf says whether a row is rising, falling or steady over the complete months', () => {
   const months = monthWindow('2026-09', 6).map((m) => ({ ...m, current: m.key === '2026-09', future: false }));
   const up = trendOf([100, 120, 140, 160, 180, 5], months);

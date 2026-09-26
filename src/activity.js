@@ -10,7 +10,7 @@
 import { describeCategories, mergeCustomCategories, normalizeCategoriesConfig } from './categories.js';
 import { normalizeLedger, reconcileLedger } from './ledger.js';
 import { dedupePending } from './pending.js';
-import { MONTH_RE, buildSheet, monthKey, monthWindow } from './sheet.js';
+import { FORECAST_HISTORY, MONTH_RE, buildSheet, monthKey, monthRange, monthWindow, shiftMonth } from './sheet.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const MAX_RANGE_DAYS = 400;
@@ -186,7 +186,9 @@ export function createActivityService({
     // Categories added in the app sit on top of the file's tree.
     const tree = mergeCustomCategories(categories, resolved ? resolved.categories : []);
 
-    const from = window[0].from;
+    // A sheet that reaches the current month has forecasts, which learn from the year behind it.
+    const historyFrom = endKey === currentMonth ? monthRange(shiftMonth(currentMonth, -FORECAST_HISTORY)).from : null;
+    const from = historyFrom && historyFrom < window[0].from ? historyFrom : window[0].from;
     const lastTo = window[window.length - 1].to;
     const fetchTo = lastTo > today ? lastTo : today;
     const { transactions, fetchedAt, cached } = await fetchTransactions(account.id, from, fetchTo, refresh);
@@ -204,6 +206,7 @@ export function createActivityService({
       balanceExcludesPending: Boolean(account.balance && account.balance.basis === 'before-pending'),
       today,
       otherAccountNames: snapshot.accounts.filter((a) => String(a.id) !== String(account.id)).map((a) => a.name),
+      historyFrom: from,
     });
     const currency =
       (account.balance && account.balance.currency) || account.currency || (sheet.transactions[0] && sheet.transactions[0].currency) || null;

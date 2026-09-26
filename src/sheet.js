@@ -4,6 +4,10 @@
  * and outgoings, and chains month-end balances back from the current balance.
  */
 import { TRANSFER, classifyTransaction, labelOf, merchantKey, transactionKey } from './categories.js';
+import { MIN_TESTS, combinedAccuracy, learnForecast, setAccuracy } from './forecast.js';
+
+/** Complete months of history the forecasts learn from, fetched behind the sheet whatever months are in view. */
+export const FORECAST_HISTORY = 12;
 
 export const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const round = (value) => Math.round(value * 10000) / 10000;
@@ -78,11 +82,13 @@ export function trendOf(values, months) {
 export const PROJECTION_MONTHS = 3;
 
 /**
- * The coming months if things carry on as they are. Outgoings and transfers run at the average of the
- * complete months in view; income repeats its latest complete month (a salary repeats, it does not
- * average); any line can be replaced by an amount the viewer set (`budgets`, keyed 'out:rent',
- * 'in:salary', 'tr:out' and so on). Balances chain on from the balance now, first adding what is still
- * expected before the current month ends (the forecast less what has already happened, never below zero).
+ * The coming months if things carry on as they are. Each line learns its forecast from its own
+ * history (forecast.js): the way of forecasting that would have been closest over recent months,
+ * starting from the average for spending and transfers and the latest month for income (a salary
+ * repeats, it does not average). Any line can be replaced by an amount the viewer set (`budgets`,
+ * keyed 'out:rent', 'in:salary', 'tr:out' and so on). Balances chain on from the balance now, first
+ * adding what is still expected before the current month ends (the forecast less what has already
+ * happened, never below zero).
  */
 export const MAX_AHEAD = 12;
 
@@ -105,7 +111,7 @@ function budgetEntry(value) {
   return Number.isFinite(amount) ? { each: amount, months: {} } : null;
 }
 
-export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, pendingNet = 0, count = PROJECTION_MONTHS }) {
+export function buildProjection({ months, income, outgoings, transfers, budgets = {}, mode = 'auto', currentBalance = null, pendingNet = 0, count = PROJECTION_MONTHS, history = null }) {
   const currentIdx = months.findIndex((m) => m.current);
   if (currentIdx < 0) return null;
   const budgetOnly = mode === 'budget'; // only amounts the viewer set count; nothing is guessed
@@ -116,9 +122,29 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
   const keys = futureMonths.map((m) => m.key);
   const complete = months.map((m, i) => (!m.current && !m.future ? i : -1)).filter((i) => i >= 0);
   const at = (values, i) => Number(values[i]) || 0;
-  const avg = (values) => (complete.length ? round(complete.reduce((acc, i) => acc + at(values, i), 0) / complete.length) : 0);
-  const latest = (values) => (complete.length ? round(at(values, complete[complete.length - 1])) : 0);
   const sum = (list) => round(list.reduce((acc, v) => acc + v, 0));
+
+  // Each line learns its forecast from its own history (see forecast.js): the months behind the sheet
+  // when they were fetched, otherwise the complete months in view. Income defaults to repeating its
+  // latest month, everything else to its average, until the track record says otherwise.
+  const historyLength = history ? history.months.length : complete.length;
+  const learned = [];
+  const learn = (category, sign, windowValues, fallback) => {
+    const series = history ? history.of(category, sign) : complete.map((i) => at(windowValues, i));
+    const result = learnForecast(series, { fallback });
+    learned.push({ category, sign, result });
+    return { result, series };
+  };
+  const describeLearning = (result) => ({
+    method: result.method,
+    fallback: result.fallback,
+    months: result.months,
+    tested: result.tested,
+    compared: result.tested >= MIN_TESTS, // whether other ways were actually weighed against the default
+    needed: Math.max(0, MIN_TESTS - result.tested), // months still to pass before they are
+    error: result.error,
+    baselineError: result.baselineError,
+  });
 
   // One forecast line: the figure for the current month, one per month ahead, and which of those the
   // viewer set. `fallback(monthKey)` applies where nothing is set: the automatic figure, or nothing at
@@ -141,25 +167,32 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
   // it runs at the actual so far instead. The planned figure is kept alongside, and nothing stored changes.
   const raise = (item, soFar) =>
     soFar > item.value ? { ...item, value: soFar, planned: item.value, raised: true, soFar } : { ...item, planned: item.value, raised: false, soFar };
-  const line = (key, auto, values) => raise({ ...forecast(key, () => (budgetOnly ? 0 : auto)), auto }, round(at(values, currentIdx)));
+  // One line: its learned figure stands wherever nothing is set (and budget mode is off). An amount set
+  // for every month is also checked against the same history, so the dialog can say how it would have fared.
+  const line = (key, category, sign, values, fallback) => {
+    const { result, series } = learn(category, sign, values, fallback);
+    const entry = budgetEntry(budgets[key]);
+    const setCheck = entry && entry.each != null ? setAccuracy(entry.each, series) : null;
+    return raise({ ...forecast(key, () => (budgetOnly ? 0 : result.value)), auto: result.value, learn: describeLearning(result), setCheck }, round(at(values, currentIdx)));
+  };
 
-  const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, latest(row.values), row.values) }));
-  const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', latest(income.uncategorised), income.uncategorised) };
+  const incomeRows = income.rows.map((row) => ({ id: row.id, label: row.label, ...line(`in:${row.id}`, row.id, 'in', row.values, 'latest') }));
+  const incomeUncategorised = { id: null, label: 'Uncategorised', ...line('in:none', null, 'in', income.uncategorised, 'latest') };
   const outgoingRows = outgoings.rows.map((row) => {
-    if (!row.subs) return { id: row.id, label: row.label, ...line(`out:${row.id}`, avg(row.values), row.values), subs: null };
-    const subs = row.subs.map((sub) => ({ id: sub.id, label: sub.label, ...line(`out:${sub.id}`, avg(sub.values), sub.values) }));
+    if (!row.subs) return { id: row.id, label: row.label, ...line(`out:${row.id}`, row.id, 'out', row.values, 'average'), subs: null };
+    const subs = row.subs.map((sub) => ({ id: sub.id, label: sub.label, ...line(`out:${sub.id}`, sub.id, 'out', sub.values, 'average') }));
     // A group runs at the sum of its sub-categories unless it was set as a whole.
     const sumNow = sum(subs.map((sub) => sub.value));
     const sumMonths = keys.map((_, i) => sum(subs.map((sub) => sub.values[i])));
     const group = forecast(`out:${row.id}`, (monthKey) => (monthKey === currentKey ? sumNow : sumMonths[keys.indexOf(monthKey)]));
-    const raised = raise({ ...group, auto: sumNow }, round(at(row.values, currentIdx)));
+    const raised = raise({ ...group, auto: sumNow, learn: { method: 'subs' } }, round(at(row.values, currentIdx)));
     // A group running at the sum of its subs is raised when any of them is; its plan is the sum of theirs.
     if (!group.set && subs.some((sub) => sub.raised)) Object.assign(raised, { raised: true, planned: sum(subs.map((sub) => sub.planned)) });
     return { id: row.id, label: row.label, ...raised, subs };
   });
-  const outgoingUncategorised = { id: null, label: 'Uncategorised', ...line('out:none', avg(outgoings.uncategorised), outgoings.uncategorised) };
-  const transfersIn = line('tr:in', avg(transfers.in), transfers.in);
-  const transfersOut = line('tr:out', avg(transfers.out), transfers.out);
+  const outgoingUncategorised = { id: null, label: 'Uncategorised', ...line('out:none', null, 'out', outgoings.uncategorised, 'average') };
+  const transfersIn = line('tr:in', TRANSFER, 'in', transfers.in, 'average');
+  const transfersOut = line('tr:out', TRANSFER, 'out', transfers.out, 'average');
 
   const totals = (rows, uncategorised) => ({
     now: sum([...rows.map((row) => row.value), uncategorised.value]),
@@ -193,10 +226,15 @@ export function buildProjection({ months, income, outgoings, transfers, budgets 
     });
   }
 
+  // How the learned forecasts would have done on each side's monthly total, against the defaults.
+  const pick = (sign) => learned.filter((item) => item.sign === sign && item.category !== TRANSFER).map((item) => item.result);
+  const accuracy = { income: combinedAccuracy(pick('in')), outgoings: combinedAccuracy(pick('out')) };
+
   return {
     months: futureMonths,
     mode: budgetOnly ? 'budget' : 'auto',
-    basis: { income: 'latest', outgoings: 'average', complete: complete.length },
+    basis: { income: 'learned', outgoings: 'learned', complete: historyLength },
+    accuracy,
     income: { rows: incomeRows, uncategorised: incomeUncategorised, total: incomeTotal },
     outgoings: { rows: outgoingRows, uncategorised: outgoingUncategorised, total: outgoingTotal },
     net,
@@ -220,6 +258,7 @@ export function buildSheet({
   balanceExcludesPending = false,
   today,
   otherAccountNames = [],
+  historyFrom = null,
 }) {
   const splits = settings && settings.splits && typeof settings.splits === 'object' ? settings.splits : {};
   const describe = (category) => {
@@ -304,6 +343,35 @@ export function buildSheet({
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) || String(b.key).localeCompare(String(a.key)));
 
   const currentMonth = monthKey(today);
+
+  // The forecasts' history: up to FORECAST_HISTORY complete months before this one, whatever is in view.
+  // It starts where the data does: at the month fetched from, or, when the provider kept less than was
+  // asked for, the month after the earliest transaction (that one is likely partial).
+  const historyKeys = [];
+  const earliest = classified.reduce((min, txn) => (!min || txn.date < min ? txn.date : min), null);
+  if (earliest) {
+    let start = shiftMonth(currentMonth, -FORECAST_HISTORY);
+    const asked = historyFrom ? monthKey(historyFrom) : monthKey(earliest);
+    const known = historyFrom && monthKey(earliest) > asked ? shiftMonth(monthKey(earliest), 1) : asked;
+    if (known > start) start = known;
+    for (let key = start; key < currentMonth; key = shiftMonth(key, 1)) historyKeys.push(key);
+  }
+  const historyIndex = new Map(historyKeys.map((key, i) => [key, i]));
+  const historySums = new Map();
+  for (const txn of classified) {
+    const i = historyIndex.get(txn.month);
+    if (i === undefined) continue;
+    const sign = txn.amount >= 0 ? 'in' : 'out';
+    for (const part of txn.parts) {
+      const bucket = `${part.category ?? ''}|${sign}`;
+      if (!historySums.has(bucket)) historySums.set(bucket, historyKeys.map(() => 0));
+      historySums.get(bucket)[i] += part.amount;
+    }
+  }
+  const history = {
+    months: historyKeys,
+    of: (category, sign) => (historySums.get(`${category ?? ''}|${sign}`) || historyKeys.map(() => 0)).map(round),
+  };
   const monthsOut = months.map((month) => ({ ...month, current: month.key === currentMonth, future: month.key > currentMonth }));
 
   // One trend per row, keyed the way the page names its rows.
@@ -343,6 +411,7 @@ export function buildSheet({
       count: ahead,
       currentBalance,
       pendingNet: balanceExcludesPending ? round(classified.filter((txn) => txn.pending).reduce((sum, txn) => sum + txn.amount, 0)) : 0,
+      history,
     }),
     transactions: inWindow,
     uncategorisedCount: inWindow.filter((txn) => txn.parts.some((part) => part.category === null)).length,

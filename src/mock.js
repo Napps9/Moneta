@@ -56,7 +56,8 @@ function mulberry32(seed) {
 const isoDate = (date) => date.toISOString().slice(0, 10);
 const money = (value) => Math.round(value * 100) / 100;
 
-export function generateTransactions(account, { days = 150, now = Date.now() } = {}) {
+// Over a year of sample history, so the learned forecasts have something to learn from.
+export function generateTransactions(account, { days = 430, now = Date.now() } = {}) {
   const profile = PROFILES[account.id] || { perWeek: 2, salary: 0 };
   const rand = mulberry32(Number(account.id) || 1);
   const out = [];

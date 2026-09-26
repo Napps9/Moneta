@@ -941,6 +941,30 @@ function forecastColumns() {
 /** A forecast line's figure for one forecast column: the current month's, or the month ahead's. */
 const lineAt = (line, column) => (column.current ? line.value : line.values[column.index]);
 
+// How a line's automatic forecast was learned, in words (see src/forecast.js).
+const METHOD_WORDS = {
+  average: 'the average of the last six months',
+  latest: 'the same as last month',
+  median: 'a typical month, one-offs left out',
+  recent: 'an average weighted towards recent months',
+  year: 'the average over the last year',
+};
+function learnedWords(learn, currency = null) {
+  if (!learn) return 'automatic';
+  if (learn.method === 'subs') return 'the sum of its sub-categories, each learned on its own';
+  const how = METHOD_WORDS[learn.method] || 'automatic';
+  if (!learn.compared) {
+    return `${how}; other ways are tested against it once there is more history, ${learn.needed === 1 ? 'next month' : `in ${plural(learn.needed, 'month')}`}`;
+  }
+  const money = (n) => (currency ? formatMoney(n, currency) : plainNumber.format(n));
+  const record = learn.error
+    ? `over the last ${plural(learn.tested, 'month')} it would have been off by ${money(learn.error)} a month on average`
+    : `it would have been exact in each of the last ${plural(learn.tested, 'month')}`;
+  return learn.method === learn.fallback
+    ? `${how}; ${record}, and no other way did clearly better`
+    : `${how}, learned from this line's history: ${record}, against ${money(learn.baselineError)} for ${METHOD_WORDS[learn.fallback]}`;
+}
+
 /** The figures of a { now, months } total laid along the forecast columns in view. */
 const totalAlong = (total) => forecastColumns().map((column) => (column.current ? total.now : total.months[column.index]));
 
@@ -966,9 +990,7 @@ function projCells(proj, label) {
       ? `${setHere === 'month' ? 'Set for this month.' : 'Set for every month.'} Automatic would be ${formatCell(line.auto)}. Tap to change it.`
       : budgetOnly
         ? `Nothing set. Automatic would be ${formatCell(line.auto)}. Tap to set an amount.`
-        : kind === 'in'
-          ? 'Its latest complete month. Tap to set your own amount, for every month or just this one.'
-          : 'Average of the complete months in view. Tap to set your own amount, for every month or just this one.';
+        : `Forecast: ${learnedWords(line.learn)}. Tap to set your own amount, for every month or just this one.`;
     const hint = raised
       ? `Raised to what has already ${kind === 'in' ? 'come in' : 'gone out'} this month, past the ${formatCell(line.planned)} forecast. ${base}`
       : base;
@@ -1188,8 +1210,16 @@ function renderSheet() {
     const bits = [
       proj.mode === 'budget'
         ? 'Budget mode: only the amounts you set count in the forecasts. Tap a forecast to set one; anything unset counts as nothing.'
-        : `Forecasts: outgoings and transfers at the average of the last ${plural(proj.basis.complete, 'complete month')}, income at its latest month. Tap a forecast to set your own amount.`,
+        : `Forecasts learn from the last ${plural(proj.basis.complete, 'complete month')}: each line uses whichever way of forecasting would have been closest to what really happened in recent months, and the choice improves as months go by. Tap a forecast to see how it was worked out, or to set your own amount.`,
     ];
+    // How the learned forecasts would have done on each side's monthly total.
+    const acc = proj.accuracy || {};
+    if (proj.mode !== 'budget' && acc.outgoings) {
+      const better = acc.outgoings.baselineError - acc.outgoings.error;
+      bits.push(
+        `Over the last ${plural(acc.outgoings.tested, 'month')} they would have been off on total outgoings by ${formatMoney(acc.outgoings.error, data.currency)} a month on average${better >= 0.5 ? `, against ${formatMoney(acc.outgoings.baselineError, data.currency)} for plain averages` : ''}${acc.income ? `, and on income by ${formatMoney(acc.income.error, data.currency)}` : ''}.`,
+      );
+    }
     // Lines this month has already passed: their forecast for this month runs at the actual so far.
     const leaves = [
       ...proj.income.rows,
@@ -2016,7 +2046,12 @@ function openBudget({ key, label, line, kind, month }) {
   if (!account || !data || !data.projection) return;
   const parts = budgetParts((state.settings.budgets[String(account.id)] || {})[key]);
   state.budget = { key, accountId: String(account.id), accountName: account.name, line, month, currency: data.currency };
-  const basis = kind === 'in' ? 'its latest complete month' : `the average of the last ${plural(data.projection.basis.complete, 'complete month')}`;
+  const basis = learnedWords(line.learn, data.currency);
+  // An amount set for every month gets the same check as the learned forecast.
+  const setNote =
+    line.setCheck && parts.each != null
+      ? ` Your ${formatMoney(parts.each, data.currency)} a month would have been off by ${formatMoney(line.setCheck.error, data.currency)} a month on average over the last ${plural(line.setCheck.tested, 'month')}.`
+      : '';
   budgetTitle.textContent = `Forecast for ${label}`;
   const currentMonth = data.months.find((m) => m.current);
   const raisedNote =
@@ -2026,7 +2061,7 @@ function openBudget({ key, label, line, kind, month }) {
   budgetAuto.textContent =
     (data.projection.mode === 'budget'
       ? `Budget mode: only what you set counts. For reference, automatic would be ${formatMoney(line.auto, data.currency)}, ${basis}.`
-      : `Automatic: ${formatMoney(line.auto, data.currency)}, ${basis}.`) + raisedNote;
+      : `Automatic: ${formatMoney(line.auto, data.currency)}, ${basis}.`) + setNote + raisedNote;
   budgetMonthLabel.textContent = `${formatMonth(month)} only`;
   // Open on the month's own amount when it has one, otherwise on the amount for every month.
   budgetMonth.checked = parts.months[month] != null;
